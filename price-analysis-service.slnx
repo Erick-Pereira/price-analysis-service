@@ -1,3 +1,7 @@
 <Solution>
-  <Project Path="price-analysis-service/price-analysis-service.csproj" />
+  <Project Path="Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" />
+  <Project Path="Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj" />
+  <Project Path="Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj" />
+  <Project Path="Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj" />
+  <Project Path="Simcag.PriceAnalysisService.Tests/Simcag.PriceAnalysisService.Tests.csproj" />
 </Solution>

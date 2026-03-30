@@ -1,6 +1,0 @@
-@price_analysis_service_HostAddress = http://localhost:5128
-
-GET {{price_analysis_service_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
