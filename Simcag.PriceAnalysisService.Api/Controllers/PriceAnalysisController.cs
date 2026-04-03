@@ -9,10 +9,24 @@ namespace price_analysis_service.Controllers
         [HttpPost("analyze")]
         public IActionResult Analyze([FromBody] PriceRequest request)
         {
-            decimal marketPrice = 4000;
+            // 🔥 Tabela mock de preços de mercado
+            var prices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "Notebook", 4000 },
+                { "Mouse", 50 },
+                { "Teclado", 150 },
+                { "Monitor", 800 }
+            };
 
+            // 🔍 Busca preço de mercado
+            decimal marketPrice = prices.ContainsKey(request.Name)
+                ? prices[request.Name]
+                : 100;
+
+            // 📊 Cálculo da diferença (%)
             var difference = ((request.PricePaid - marketPrice) / marketPrice) * 100;
 
+            // 🚨 Classificação
             string status;
 
             if (difference > 50)
@@ -22,6 +36,7 @@ namespace price_analysis_service.Controllers
             else
                 status = "NORMAL";
 
+            // 📦 Resposta
             var response = new
             {
                 product = request.Name,
@@ -35,6 +50,7 @@ namespace price_analysis_service.Controllers
         }
     }
 
+    // 📥 Modelo correto da requisição
     public class PriceRequest
     {
         public string Name { get; set; }
