@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -24,18 +25,18 @@ public class PriceAnalysisService : IPriceAnalysisService
     }
 
     public async Task<PriceAnalysisResult> AnalyzePriceAsync(
-        string productId, 
+        string productId,
         CancellationToken cancellationToken = default)
     {
         var priceHistory = await _priceRepository.GetPriceHistoryAsync(productId, cancellationToken);
-        
+
         if (priceHistory.Count < 5)
             throw new InvalidOperationException($"Insufficient data for product {productId}. At least 5 price records are required.");
-        
+
         var aggregate = ProductPriceAggregate.FromHistory(productId, priceHistory);
         var currentPrice = priceHistory.OrderByDescending(p => p.Timestamp).First().Price;
         var anomalies = await _outlierDetectionService.DetectAnomaliesAsync(currentPrice, aggregate, cancellationToken);
-        
+
         var analysisResult = new PriceAnalysisResult
         {
             ProductId = productId,
@@ -46,21 +47,21 @@ public class PriceAnalysisService : IPriceAnalysisService
             AnalysisDate = DateTime.UtcNow,
             Anomalies = anomalies.ToList()
         };
-        
+
         await _priceRepository.SaveAnalysisResultAsync(analysisResult, cancellationToken);
-        
+
         return analysisResult;
     }
 
     public async Task<PriceAnalysisResult> RecalculatePriceStatsAsync(
-        string productId, 
+        string productId,
         CancellationToken cancellationToken = default)
     {
         var priceHistory = await _priceRepository.GetPriceHistoryAsync(productId, cancellationToken);
-        
+
         if (priceHistory.Count < 5)
             throw new InvalidOperationException($"Insufficient data for product {productId}. At least 5 price records are required.");
-        
+
         var aggregate = ProductPriceAggregate.FromHistory(productId, priceHistory);
         var existingAnalysis = await _priceRepository.GetAnalysisResultAsync(productId, cancellationToken);
 
@@ -72,9 +73,9 @@ public class PriceAnalysisService : IPriceAnalysisService
         existingAnalysis.StandardDeviation = aggregate.StandardDeviation;
         existingAnalysis.SafeZone = aggregate.SafeZone;
         existingAnalysis.AnalysisDate = DateTime.UtcNow;
-        
+
         await _priceRepository.SaveAnalysisResultAsync(existingAnalysis, cancellationToken);
-        
+
         return existingAnalysis;
     }
 

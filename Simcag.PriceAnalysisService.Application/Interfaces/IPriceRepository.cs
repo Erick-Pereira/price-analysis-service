@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,3 +18,4 @@ public interface IPriceRepository
     Task<bool> ExistsByEventIdAsync(Guid eventId, CancellationToken cancellationToken = default);
     Task MarkEventAsProcessedAsync(Guid eventId, CancellationToken cancellationToken = default);
 }
+

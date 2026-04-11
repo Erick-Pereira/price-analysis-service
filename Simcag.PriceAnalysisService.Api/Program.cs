@@ -1,14 +1,14 @@
-﻿using Simcag.PriceAnalysisService.Application.Events;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
-using Simcag.PriceAnalysisService.Application.UseCases;
-using Simcag.PriceAnalysisService.Infrastructure.Extensions;
-using Simcag.PriceAnalysisService.Infrastructure.Messaging;
-using Simcag.PriceAnalysisService.Infrastructure.Persistence;
+
+using Simcag.PriceAnalysisService.Infrastructure.Configuration;
 using Simcag.PriceAnalysisService.Infrastructure.Workers;
 using Simcag.Shared.Messaging.Configuration;
 using Simcag.Shared.Messaging.Contracts;
 using Simcag.Shared.Messaging.Extensions;
+using Simcag.PriceAnalysisService.Application.Events;
+using Simcag.PriceAnalysisService.Infrastructure.Messaging;
+using Simcag.PriceAnalysisService.Application.UseCases;
 
 DotNetEnv.Env.Load();
 
@@ -30,7 +30,6 @@ builder.Services.AddSingleton<IPriceStatisticsService, PriceStatisticsService>()
 builder.Services.AddSingleton<IPriceOutlierDetectionService, PriceOutlierDetectionService>();
 builder.Services.AddSingleton<ProcessPriceDataUseCase>();
 builder.Services.AddSingleton<DetectPriceVariationUseCase>();
-builder.Services.AddSingleton<IPriceRepository, PriceRepository>();
 
 var rabbitMqHost = Environment.GetEnvironmentVariable("RABBITMQ__HOST") ?? builder.Configuration["RabbitMq:Host"] ?? "localhost";
 var rabbitMqPort = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ__PORT") ?? builder.Configuration["RabbitMq:Port"] ?? "5672");
@@ -59,7 +58,7 @@ builder.Services.AddRabbitMqEventPublisher<PriceAnalyzedEvent>("simcag-events");
 builder.Services.AddRabbitMqEventPublisher<PriceUpdatedEvent>("simcag-events");
 builder.Services.AddSingleton<IEventConsumer<DataProcessedEvent>, PriceAnalysisDataProcessedEventConsumer>();
 
-// builder.Services.AddPriceAnalysisInfrastructure(builder.Configuration);
+builder.Services.AddPriceAnalysisInfrastructure(builder.Configuration);
 
 builder.Services.AddHostedService<PriceAnalysisWorker>();
 
@@ -67,8 +66,11 @@ builder.Services.AddLogging(config => config.SetMinimumLevel(LogLevel.Informatio
 
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.UseAuthorization();
 
