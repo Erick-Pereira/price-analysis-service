@@ -4,15 +4,27 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>price_analysis_service</RootNamespace>
-    <UserSecretsId>417363a6-3282-4e7a-b31f-a2970abaf350</UserSecretsId>
-    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.4" />
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.23.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageReference Include="Simcag.Shared" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Application\Simcag.PriceAnalysisService.Application.csproj" />
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Infrastructure\Simcag.PriceAnalysisService.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Configuration\" />
+    <Folder Include="Contracts\Requests\" />
+    <Folder Include="Contracts\Responses\" />
+    <Folder Include="Extensions\" />
+    <Folder Include="HealthChecks\" />
+    <Folder Include="Middlewares\" />
   </ItemGroup>
 
 </Project>

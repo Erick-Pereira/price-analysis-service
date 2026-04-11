@@ -1,10 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿namespace Simcag.PriceAnalysisService.Domain.Enums;
 
-namespace Simcag.PriceAnalysisService.Domain.Enums
+public enum PriceAnomalyType
 {
-    internal class PriceAnomalyType
-    {
-    }
+    None,
+    LowAnomaly,
+    HighAnomaly
 }

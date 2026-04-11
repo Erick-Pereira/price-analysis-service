@@ -1,10 +1,20 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+using System;
+using Simcag.Shared.Events;
 
-namespace Simcag.PriceAnalysisService.Domain.Events
+namespace Simcag.PriceAnalysisService.Application.Events;
+
+public class PriceAnalyzedEvent : BaseEvent
 {
-    internal class PriceAnalyzedEvent
-    {
-    }
+    public override string EventType => "price.analyzed";
+
+    public string ProductId { get; init; } = string.Empty;
+    public decimal AveragePrice { get; init; }
+    public decimal MedianPrice { get; init; }
+    public decimal StandardDeviation { get; init; }
+    public decimal SafeZoneMin { get; init; }
+    public decimal SafeZoneMax { get; init; }
+    public DateTime AnalysisDate { get; init; }
+    public bool HasAnomalies { get; init; }
+
+    public PriceAnalyzedEvent() { }
 }

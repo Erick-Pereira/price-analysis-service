@@ -6,4 +6,24 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+<ItemGroup>
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Application\Simcag.PriceAnalysisService.Application.csproj" />
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Domain\Simcag.PriceAnalysisService.Domain.csproj" />
+    <PackageReference Include="Simcag.Shared" Version="1.0.0" />
+    <PackageReference Include="StackExchange.Redis" Version="2.12.14" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+  </ItemGroup>
+
+<ItemGroup>
+  <Folder Include="Configuration\" />
+  <Folder Include="Messaging\Contracts\" />
+  <Folder Include="Messaging\Redis\" />
+  <Folder Include="Persistence\Configurations\" />
+  <Folder Include="Persistence\DbContext\" />
+  <Folder Include="Persistence\Repositories\" />
+  <Folder Include="Resilience\" />
+  <Folder Include="Serialization\" />
+</ItemGroup>
+
 </Project>

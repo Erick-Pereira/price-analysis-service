@@ -1,30 +1,24 @@
-# See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
-
-# This stage is used when running from VS in fast mode (Default for Debug configuration)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-USER $APP_UID
 WORKDIR /app
-EXPOSE 8080
-EXPOSE 8081
+EXPOSE 80
+EXPOSE 443
 
-
-# This stage is used to build the service project
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["price-analysis-service/price-analysis-service.csproj", "price-analysis-service/"]
-RUN dotnet restore "./price-analysis-service/price-analysis-service.csproj"
+COPY ["Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "Simcag.PriceAnalysisService.Api/"]
+COPY ["Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "Simcag.PriceAnalysisService.Application/"]
+COPY ["Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "Simcag.PriceAnalysisService.Domain/"]
+COPY ["Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "Simcag.PriceAnalysisService.Infrastructure/"]
+
+RUN dotnet restore "Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
 COPY . .
-WORKDIR "/src/price-analysis-service"
-RUN dotnet build "./price-analysis-service.csproj" -c $BUILD_CONFIGURATION -o /app/build
+WORKDIR "/src/Simcag.PriceAnalysisService.Api"
+RUN dotnet build "Simcag.PriceAnalysisService.Api.csproj" -c Release -o /app/build
 
-# This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
-ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./price-analysis-service.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "Simcag.PriceAnalysisService.Api.csproj" -c Release -o /app/publish
 
-# This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
-ENTRYPOINT ["dotnet", "price-analysis-service.dll"]
+ENTRYPOINT ["dotnet", "Simcag.PriceAnalysisService.Api.dll"]

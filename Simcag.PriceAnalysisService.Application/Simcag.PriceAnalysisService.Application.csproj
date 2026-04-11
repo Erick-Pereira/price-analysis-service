@@ -1,9 +1,24 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Simcag.PriceAnalysisService.Domain\Simcag.PriceAnalysisService.Domain.csproj" />
+		<PackageReference Include="Simcag.Shared" Version="1.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Folder Include="Algorithms\" />
+		<Folder Include="DTOs\" />
+		<Folder Include="Events\" />
+		<Folder Include="Exceptions\" />
+		<Folder Include="UseCases\AnalyzePrice\" />
+		<Folder Include="UseCases\RecalculatePriceStats\" />
+		<Folder Include="Workers\" />
+	</ItemGroup>
 
 </Project>
