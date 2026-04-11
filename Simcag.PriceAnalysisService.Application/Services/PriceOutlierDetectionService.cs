@@ -1,10 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using Simcag.PriceAnalysisService.Application.Interfaces;
 
 namespace Simcag.PriceAnalysisService.Application.Services
 {
-    internal class PriceOutlierDetectionService
+    public class PriceOutlierDetectionService : IPriceOutlierDetectionService
     {
+        public string Classify(decimal differencePercentage)
+        {
+            if (differencePercentage > 50)
+                return "SUPERFATURADO";
+
+            if (differencePercentage > 20)
+                return "SUSPEITO";
+
+            return "NORMAL";
+        }
     }
 }

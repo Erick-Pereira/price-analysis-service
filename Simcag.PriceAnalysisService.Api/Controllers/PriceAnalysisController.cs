@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Simcag.PriceAnalysisService.Application.Interfaces;
 
 namespace price_analysis_service.Controllers
 {
@@ -6,54 +7,37 @@ namespace price_analysis_service.Controllers
     [Route("[controller]")]
     public class PriceAnalysisController : ControllerBase
     {
+        private readonly IPriceAnalysisService _service;
+        private readonly IPriceRepository _repository;
+
+        public PriceAnalysisController(IPriceAnalysisService service, IPriceRepository repository)
+        {
+            _service = service;
+            _repository = repository;
+        }
+
+        // 🔥 POST - Analisa e salva
         [HttpPost("analyze")]
         public IActionResult Analyze([FromBody] PriceRequest request)
         {
-            // 🔥 Tabela mock de preços de mercado
-            var prices = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
-            {
-                { "Notebook", 4000 },
-                { "Mouse", 50 },
-                { "Teclado", 150 },
-                { "Monitor", 800 }
-            };
+            var result = _service.Analyze(request.Name, request.PricePaid);
 
-            // 🔍 Busca preço de mercado
-            decimal marketPrice = prices.ContainsKey(request.Name)
-                ? prices[request.Name]
-                : 100;
+            return Ok(result);
+        }
 
-            // 📊 Cálculo da diferença (%)
-            var difference = ((request.PricePaid - marketPrice) / marketPrice) * 100;
+        // 🔥 GET - Retorna histórico
+        [HttpGet("history")]
+        public IActionResult GetHistory()
+        {
+            var history = _repository.GetAll();
 
-            // 🚨 Classificação
-            string status;
-
-            if (difference > 50)
-                status = "SUPERFATURADO";
-            else if (difference > 20)
-                status = "SUSPEITO";
-            else
-                status = "NORMAL";
-
-            // 📦 Resposta
-            var response = new
-            {
-                product = request.Name,
-                pricePaid = request.PricePaid,
-                marketPrice = marketPrice,
-                difference = Math.Round(difference, 2),
-                status = status
-            };
-
-            return Ok(response);
+            return Ok(history);
         }
     }
 
-    // 📥 Modelo correto da requisição
     public class PriceRequest
     {
-        public string Name { get; set; }
-        public decimal PricePaid { get; set; }
+        public required string Name { get; set; }
+        public required decimal PricePaid { get; set; }
     }
 }

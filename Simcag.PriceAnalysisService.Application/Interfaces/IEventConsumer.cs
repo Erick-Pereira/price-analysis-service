@@ -1,10 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Simcag.PriceAnalysisService.Application.Interfaces
+﻿namespace Simcag.PriceAnalysisService.Application.Interfaces
 {
-    internal interface IEventConsumer
+    public interface IPriceAnalysisService
     {
+        object Analyze(string name, decimal pricePaid);
     }
 }

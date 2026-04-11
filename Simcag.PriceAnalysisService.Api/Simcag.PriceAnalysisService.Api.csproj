@@ -15,4 +15,9 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Application\Simcag.PriceAnalysisService.Application.csproj" />
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Infrastructure\Simcag.PriceAnalysisService.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>

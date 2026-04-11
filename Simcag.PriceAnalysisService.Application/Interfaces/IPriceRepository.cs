@@ -1,10 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Simcag.PriceAnalysisService.Application.Interfaces
+﻿namespace Simcag.PriceAnalysisService.Application.Interfaces
 {
-    internal interface IPriceRepository
+    public interface IPriceRepository
     {
+        void Save(object analysis);
+        List<object> GetAll();
     }
 }

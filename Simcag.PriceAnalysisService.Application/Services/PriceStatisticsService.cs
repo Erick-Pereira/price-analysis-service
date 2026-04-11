@@ -1,10 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
+﻿using Simcag.PriceAnalysisService.Application.Interfaces;
 
 namespace Simcag.PriceAnalysisService.Application.Services
 {
-    internal class PriceStatisticsService
+    public class PriceStatisticsService : IPriceStatisticsService
     {
+        public decimal CalculateDifferencePercentage(decimal pricePaid, decimal marketPrice)
+        {
+            return ((pricePaid - marketPrice) / marketPrice) * 100;
+        }
     }
 }

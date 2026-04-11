@@ -1,10 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-
-namespace Simcag.PriceAnalysisService.Application.Interfaces
+﻿namespace Simcag.PriceAnalysisService.Application.Interfaces
 {
-    internal interface IEventPublisher
+    public interface IPriceStatisticsService
     {
+        decimal CalculateDifferencePercentage(decimal pricePaid, decimal marketPrice);
     }
 }
