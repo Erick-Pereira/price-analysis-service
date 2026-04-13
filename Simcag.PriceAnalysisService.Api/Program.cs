@@ -9,6 +9,8 @@ using Simcag.Shared.Messaging.Extensions;
 using Simcag.PriceAnalysisService.Application.Events;
 using Simcag.PriceAnalysisService.Infrastructure.Messaging;
 using Simcag.PriceAnalysisService.Application.UseCases;
+using Microsoft.EntityFrameworkCore;
+using Simcag.PriceAnalysisService.Infrastructure.Persistence;
 
 DotNetEnv.Env.Load();
 
@@ -30,6 +32,8 @@ builder.Services.AddSingleton<IPriceStatisticsService, PriceStatisticsService>()
 builder.Services.AddSingleton<IPriceOutlierDetectionService, PriceOutlierDetectionService>();
 builder.Services.AddSingleton<ProcessPriceDataUseCase>();
 builder.Services.AddSingleton<DetectPriceVariationUseCase>();
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 var rabbitMqHost = Environment.GetEnvironmentVariable("RABBITMQ__HOST") ?? builder.Configuration["RabbitMq:Host"] ?? "localhost";
 var rabbitMqPort = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ__PORT") ?? builder.Configuration["RabbitMq:Port"] ?? "5672");
