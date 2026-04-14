@@ -1,6 +1,8 @@
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
-
+using StackExchange.Redis;
+using Simcag.PriceAnalysisService.Infrastructure.Redis;
+using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Infrastructure.Configuration;
 using Simcag.PriceAnalysisService.Infrastructure.Workers;
 using Simcag.Shared.Messaging.Configuration;
@@ -26,6 +28,12 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHealthChecks();
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(
+    ConnectionMultiplexer.Connect("localhost:6379")
+);
+
+builder.Services.AddSingleton<IMarketDataCacheService, MarketDataCacheService>();
 
 builder.Services.AddSingleton<IPriceAnalysisService, PriceAnalysisService>();
 builder.Services.AddSingleton<IPriceStatisticsService, PriceStatisticsService>();
