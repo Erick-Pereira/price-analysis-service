@@ -1,11 +1,8 @@
-using Simcag.PriceAnalysisService.Domain.Entities;
+using Simcag.PriceAnalysisService.Application.Events;
 
 namespace Simcag.PriceAnalysisService.Application.Interfaces;
 
 public interface IPriceAnalysisService
 {
-    Task<PriceAnalysisResult> AnalyzePriceAsync(string productId, CancellationToken cancellationToken = default);
-    Task<PriceAnalysisResult> RecalculatePriceStatsAsync(string productId, CancellationToken cancellationToken = default);
-    Task<IEnumerable<PriceAnalysisResult>> GetAllAnalysisAsync(CancellationToken cancellationToken = default);
-    Task<IEnumerable<PriceAnomaly>> GetAnomaliesAsync(CancellationToken cancellationToken = default);
+    Task AnalyzePriceAsync(DataProcessedEvent dataProcessedEvent, CancellationToken ct);
 }

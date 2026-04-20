@@ -1,116 +1,163 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Domain.Entities;
+using Simcag.Shared.Events;
+using Microsoft.Extensions.Logging;
+using System.Net.Http.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using Simcag.PriceAnalysisService.Application.Events;
+using Simcag.Shared.Messaging.Contracts;
 
 namespace Simcag.PriceAnalysisService.Application.Services;
 
 public class PriceAnalysisService : IPriceAnalysisService
 {
-    private readonly IPriceStatisticsService _statisticsService;
-    private readonly IPriceOutlierDetectionService _outlierDetectionService;
-    private readonly IPriceRepository _priceRepository;
-    private readonly IMarketDataCacheService _cacheService;
+    private readonly IPriceAnalysisRepository _analysisRepository;
+    private readonly IEventPublisher<PriceAnalyzedEvent> _eventPublisher;
+    private readonly ILogger<PriceAnalysisService> _logger;
+    private readonly HttpClient _httpClient;
 
     public PriceAnalysisService(
-        IPriceStatisticsService statisticsService,
-        IPriceOutlierDetectionService outlierDetectionService,
-        IPriceRepository priceRepository,
-        IMarketDataCacheService cacheService)
+        IPriceAnalysisRepository analysisRepository,
+        IEventPublisher<PriceAnalyzedEvent> eventPublisher,
+        ILogger<PriceAnalysisService> logger,
+        HttpClient httpClient)
     {
-        _statisticsService = statisticsService;
-        _outlierDetectionService = outlierDetectionService;
-        _priceRepository = priceRepository;
-        _cacheService = cacheService;
+        _analysisRepository = analysisRepository;
+        _eventPublisher = eventPublisher;
+        _logger = logger;
+        _httpClient = httpClient;
     }
 
-    public async Task<PriceAnalysisResult> AnalyzePriceAsync(
-        string productId,
-        CancellationToken cancellationToken = default)
+    public async Task AnalyzePriceAsync(DataProcessedEvent dataProcessedEvent, CancellationToken ct)
     {
-   
-        var cachedPrice = await _cacheService.GetPriceAsync(productId);
+        using var scope = _logger.BeginScope("{ProductId} {EventId}", dataProcessedEvent.ProductId, dataProcessedEvent.EventId);
 
-        decimal currentPrice;
+        _logger.LogInformation("Starting price analysis for product {ProductId}", dataProcessedEvent.ProductId);
 
-        if (cachedPrice.HasValue)
+        try
         {
-            currentPrice = cachedPrice.Value;
+            // Get market price from Market Data Service
+            var marketPrice = await GetMarketPriceAsync(dataProcessedEvent.ProductName, ct);
+
+            // Calculate deviation and determine anomaly
+            decimal? deviationPercentage = null;
+            var isAnomalous = false;
+            string? analysisNotes = null;
+
+            if (marketPrice.HasValue)
+            {
+                deviationPercentage = CalculateDeviationPercentage(dataProcessedEvent.Price, marketPrice.Value);
+                isAnomalous = Math.Abs(deviationPercentage.Value) > 10; // >10% deviation is anomalous
+
+                analysisNotes = isAnomalous
+                    ? $"Anomalous price deviation: {deviationPercentage:F2}% (Market: {marketPrice:C}, Product: {dataProcessedEvent.Price:C})"
+                    : $"Normal price within range: {deviationPercentage:F2}% deviation";
+
+                _logger.LogInformation("Price analysis completed: Deviation {Deviation:F2}%, Anomalous: {IsAnomalous}",
+                    deviationPercentage, isAnomalous);
+            }
+            else
+            {
+                analysisNotes = "Market price not available - cannot determine deviation";
+                _logger.LogWarning("Market price not found for product {ProductName}", dataProcessedEvent.ProductName);
+            }
+
+            // Create analysis record
+            var analysis = PriceAnalysis.Create(
+                productId: dataProcessedEvent.ProductId,
+                originalPrice: dataProcessedEvent.Price,
+                marketPrice: marketPrice,
+                deviationPercentage: deviationPercentage,
+                isAnomalous: isAnomalous,
+                analysisNotes: analysisNotes);
+
+            await _analysisRepository.AddAsync(analysis, ct);
+
+            // Publish price analyzed event
+            var priceAnalyzedEvent = new PriceAnalyzedEvent
+            {
+                ProductId = dataProcessedEvent.ProductId,
+                AveragePrice = marketPrice ?? 0,
+                LastPrice = dataProcessedEvent.Price,
+                PriceVariation = deviationPercentage ?? 0,
+                Trend = DetermineTrend(marketPrice, dataProcessedEvent.Price)
+            };
+
+            await _eventPublisher.PublishAsync(priceAnalyzedEvent, ct);
+
+            _logger.LogInformation("Price analysis completed and event published for product {ProductId}", dataProcessedEvent.ProductId);
         }
-        else
+        catch (Exception ex)
         {
-            var priceHistory = await _priceRepository.GetPriceHistoryAsync(productId, cancellationToken);
-
-            if (priceHistory.Count < 5)
-                throw new InvalidOperationException($"Insufficient data for product {productId}.");
-
-            currentPrice = priceHistory
-                .OrderByDescending(p => p.Timestamp)
-                .First().Price;
-
-            await _cacheService.SetPriceAsync(productId, currentPrice);
+            _logger.LogError(ex, "Failed to analyze price for product {ProductId}", dataProcessedEvent.ProductId);
+            throw;
         }
+    }
 
-        var history = await _priceRepository.GetPriceHistoryAsync(productId, cancellationToken);
-        var aggregate = ProductPriceAggregate.FromHistory(productId, history);
-
-        var anomalies = await _outlierDetectionService
-            .DetectAnomaliesAsync(currentPrice, aggregate, cancellationToken);
-
-        var result = new PriceAnalysisResult
+    private async Task<decimal?> GetMarketPriceAsync(string productName, CancellationToken ct)
+    {
+        try
         {
-            ProductId = productId,
-            AveragePrice = aggregate.AveragePrice,
-            MedianPrice = aggregate.MedianPrice,
-            StandardDeviation = aggregate.StandardDeviation,
-            SafeZone = aggregate.SafeZone,
-            AnalysisDate = DateTime.UtcNow,
-            Anomalies = anomalies.ToList()
-        };
+            // Call Market Data Service
+            var response = await _httpClient.GetAsync($"/api/marketdata/price?productName={Uri.EscapeDataString(productName)}", ct);
 
-        await _priceRepository.SaveAnalysisResultAsync(result, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                var result = await response.Content.ReadFromJsonAsync<MarketDataResponse>(ct);
+                if (result?.Success == true && result.Data != null)
+                {
+                    _logger.LogInformation("Retrieved market price {Price:C} for product {ProductName}",
+                        result.Data.Price, productName);
+                    return result.Data.Price;
+                }
+            }
 
-        return result;
+            _logger.LogWarning("Failed to retrieve market price for {ProductName}. Status: {StatusCode}",
+                productName, response.StatusCode);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calling Market Data Service for product {ProductName}", productName);
+            return null;
+        }
     }
 
-    public async Task<IEnumerable<PriceAnalysisResult>> GetAllAnalysisAsync(
-        CancellationToken cancellationToken = default)
+    private decimal CalculateDeviationPercentage(decimal originalPrice, decimal marketPrice)
     {
-        return await _priceRepository.GetAllAnalysisResultsAsync(cancellationToken);
+        if (marketPrice == 0)
+            return 0;
+
+        return ((originalPrice - marketPrice) / marketPrice) * 100;
     }
 
-    public async Task<IEnumerable<PriceAnomaly>> GetAnomaliesAsync(
-        CancellationToken cancellationToken = default)
+    private string DetermineTrend(decimal? marketPrice, decimal currentPrice)
     {
-        return await _priceRepository.GetAllAnomaliesAsync(cancellationToken);
+        if (!marketPrice.HasValue)
+            return "UNKNOWN";
+
+        var variation = ((currentPrice - marketPrice.Value) / marketPrice.Value) * 100;
+
+        if (variation >= 5) return "UP";
+        if (variation <= -5) return "DOWN";
+        return "STABLE";
     }
+}
 
-    public async Task<PriceAnalysisResult> RecalculatePriceStatsAsync(
-        string productId,
-        CancellationToken cancellationToken = default)
-    {
-        var priceHistory = await _priceRepository.GetPriceHistoryAsync(productId, cancellationToken);
+// Response DTO for Market Data Service
+public class MarketDataResponse
+{
+    public bool Success { get; set; }
+    public MarketData? Data { get; set; }
+    public string? Message { get; set; }
+    public string[]? Errors { get; set; }
+}
 
-        if (priceHistory.Count < 5)
-            throw new InvalidOperationException($"Insufficient data.");
-
-        var aggregate = ProductPriceAggregate.FromHistory(productId, priceHistory);
-        var existing = await _priceRepository.GetAnalysisResultAsync(productId, cancellationToken);
-
-        if (existing == null)
-            throw new InvalidOperationException("No analysis found.");
-
-        existing.AveragePrice = aggregate.AveragePrice;
-        existing.MedianPrice = aggregate.MedianPrice;
-        existing.StandardDeviation = aggregate.StandardDeviation;
-        existing.SafeZone = aggregate.SafeZone;
-        existing.AnalysisDate = DateTime.UtcNow;
-
-        await _priceRepository.SaveAnalysisResultAsync(existing, cancellationToken);
-
-        return existing;
-    }
+public class MarketData
+{
+    public string ProductName { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public string Source { get; set; } = string.Empty;
+    public DateTime CollectedDate { get; set; }
 }

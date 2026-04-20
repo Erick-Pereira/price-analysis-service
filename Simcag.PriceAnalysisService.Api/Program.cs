@@ -1,80 +1,71 @@
+using Microsoft.EntityFrameworkCore;
+using Simcag.ProcessingService.Domain.Events;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
-using StackExchange.Redis;
-using Simcag.PriceAnalysisService.Infrastructure.Redis;
-using Simcag.PriceAnalysisService.Application.Interfaces;
-using Simcag.PriceAnalysisService.Infrastructure.Configuration;
-using Simcag.PriceAnalysisService.Infrastructure.Workers;
+using Simcag.PriceAnalysisService.Application.Workers;
+using Simcag.PriceAnalysisService.Domain.Entities;
+using Simcag.PriceAnalysisService.Infrastructure.Persistence.DbContext;
+using Simcag.PriceAnalysisService.Infrastructure.Repositories;
 using Simcag.Shared.Messaging.Configuration;
 using Simcag.Shared.Messaging.Contracts;
 using Simcag.Shared.Messaging.Extensions;
-using Simcag.PriceAnalysisService.Application.Events;
-using Simcag.PriceAnalysisService.Infrastructure.Messaging;
-using Simcag.PriceAnalysisService.Application.UseCases;
-using Microsoft.EntityFrameworkCore;
-using Simcag.PriceAnalysisService.Infrastructure.Persistence;
+using Polly;
+using Polly.Extensions.Http;
 
 DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
-var urls = GetListeningUrl();
-builder.WebHost.UseUrls(urls);
-Console.WriteLine($"🚀 Price Analysis Service listening on: {urls}");
-Console.WriteLine($"📡 Access via: http://localhost:{ParsePort(urls)} or http://container-host:{ParsePort(urls)}");
-
+// Add services to the container.
 builder.Services.AddControllers();
-
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddHealthChecks();
 
-builder.Services.AddSingleton<IConnectionMultiplexer>(
-    ConnectionMultiplexer.Connect("localhost:6379")
-);
+// Database
+var connectionString = $"Host={Environment.GetEnvironmentVariable("DB__HOST")};" +
+                      $"Port={Environment.GetEnvironmentVariable("DB__PORT")};" +
+                      $"Database={Environment.GetEnvironmentVariable("DB__NAME")};" +
+                      $"Username={Environment.GetEnvironmentVariable("DB__USER")};" +
+                      $"Password={Environment.GetEnvironmentVariable("DB__PASSWORD")}";
 
-builder.Services.AddSingleton<IMarketDataCacheService, MarketDataCacheService>();
+builder.Services.AddDbContext<PriceAnalysisDbContext>(options =>
+    options.UseNpgsql(connectionString));
 
-builder.Services.AddSingleton<IPriceAnalysisService, PriceAnalysisService>();
-builder.Services.AddSingleton<IPriceStatisticsService, PriceStatisticsService>();
-builder.Services.AddSingleton<IPriceOutlierDetectionService, PriceOutlierDetectionService>();
-builder.Services.AddSingleton<ProcessPriceDataUseCase>();
-builder.Services.AddSingleton<DetectPriceVariationUseCase>();
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+// Repositories
+builder.Services.AddScoped<IPriceAnalysisRepository, PriceAnalysisRepository>();
 
-var rabbitMqHost = Environment.GetEnvironmentVariable("RABBITMQ__HOST") ?? builder.Configuration["RabbitMq:Host"] ?? "localhost";
-var rabbitMqPort = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ__PORT") ?? builder.Configuration["RabbitMq:Port"] ?? "5672");
-var rabbitMqUserName = Environment.GetEnvironmentVariable("RABBITMQ__USERNAME") ?? builder.Configuration["RabbitMq:UserName"] ?? "guest";
-var rabbitMqPassword = Environment.GetEnvironmentVariable("RABBITMQ__PASSWORD") ?? builder.Configuration["RabbitMq:Password"] ?? "guest";
-var rabbitMqVirtualHost = Environment.GetEnvironmentVariable("RABBITMQ__VIRTUALHOST") ?? builder.Configuration["RabbitMq:VirtualHost"] ?? "/";
+// Services
+builder.Services.AddScoped<IPriceAnalysisService, PriceAnalysisService>();
 
+// HTTP Client with Polly for Market Data Service
+builder.Services.AddHttpClient("MarketDataClient", client =>
+{
+    client.BaseAddress = new Uri(Environment.GetEnvironmentVariable("MARKETDATA_SERVICE_URL") ?? "http://localhost:8082");
+    client.Timeout = TimeSpan.FromSeconds(10);
+})
+.AddPolicyHandler(GetRetryPolicy())
+.AddPolicyHandler(GetCircuitBreakerPolicy());
+
+// Health Checks
+builder.Services.AddHealthChecks()
+    .AddNpgSql(connectionString, name: "PostgreSQL");
+
+// RabbitMQ Configuration
 var rabbitMqOptions = new RabbitMqOptions
 {
-    Host = rabbitMqHost,
-    Port = rabbitMqPort,
-    UserName = rabbitMqUserName,
-    Password = rabbitMqPassword,
-    VirtualHost = rabbitMqVirtualHost
+    Host = Environment.GetEnvironmentVariable("RABBITMQ__HOST") ?? "localhost",
+    Port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ__PORT") ?? "5672"),
+    UserName = Environment.GetEnvironmentVariable("RABBITMQ__USERNAME") ?? "guest",
+    Password = Environment.GetEnvironmentVariable("RABBITMQ__PASSWORD") ?? "guest",
+    VirtualHost = Environment.GetEnvironmentVariable("RABBITMQ__VIRTUALHOST") ?? "/"
 };
 
-if (string.IsNullOrEmpty(rabbitMqOptions.Host))
-    throw new InvalidOperationException("RabbitMq:Host is not configured. Check appsettings.json or environment variables.");
-if (string.IsNullOrEmpty(rabbitMqOptions.UserName))
-    throw new InvalidOperationException("RabbitMq:UserName is not configured. Check appsettings.json or environment variables.");
-
 builder.Services.AddRabbitMqMessaging(rabbitMqOptions);
-builder.Services.AddSingleton<IRabbitMqChannelFactory, RabbitMqChannelFactory>();
-builder.Services.AddSingleton<IQueueConfigurator, PriceAnalysisQueueConfigurator>();
+builder.Services.AddRabbitMqEventConsumer<DataProcessedEvent>("data.processed");
 builder.Services.AddRabbitMqEventPublisher<PriceAnalyzedEvent>("simcag-events");
-builder.Services.AddRabbitMqEventPublisher<PriceUpdatedEvent>("simcag-events");
-builder.Services.AddSingleton<IEventConsumer<DataProcessedEvent>, PriceAnalysisDataProcessedEventConsumer>();
 
-builder.Services.AddPriceAnalysisInfrastructure(builder.Configuration);
-
-builder.Services.AddHostedService<PriceAnalysisWorker>();
-
-builder.Services.AddLogging(config => config.SetMinimumLevel(LogLevel.Information));
+// Background Services
+builder.Services.AddHostedService<DataProcessedEventConsumer>();
 
 var app = builder.Build();
 
@@ -91,52 +82,17 @@ app.MapHealthChecks("/health");
 
 app.Run();
 
-static string GetListeningUrl()
+// Polly policies for HTTP resilience
+static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
 {
-    const int defaultPort = 8080;
-
-    var envUrls = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
-    var envPort = Environment.GetEnvironmentVariable("PORT");
-    var requestedUrl = !string.IsNullOrWhiteSpace(envUrls)
-        ? envUrls
-        : !string.IsNullOrWhiteSpace(envPort)
-            ? $"http://0.0.0.0:{envPort}"
-            : $"http://0.0.0.0:{defaultPort}";
-
-    var requestedPort = ParsePort(requestedUrl) ?? defaultPort;
-    var port = FindAvailablePort(requestedPort);
-    return $"http://0.0.0.0:{port}";
+    return HttpPolicyExtensions
+        .HandleTransientHttpError()
+        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
 }
 
-static int? ParsePort(string url)
+static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
 {
-    var match = System.Text.RegularExpressions.Regex.Match(url, @":(\d+)");
-    return match.Success && int.TryParse(match.Groups[1].Value, out var port)
-        ? port
-        : null;
-}
-
-static int FindAvailablePort(int startPort)
-{
-    for (var port = startPort; port < startPort + 50; port++)
-    {
-        if (IsPortAvailable(port))
-            return port;
-    }
-
-    return startPort;
-}
-
-static bool IsPortAvailable(int port)
-{
-    try
-    {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Any, port);
-        listener.Start();
-        return true;
-    }
-    catch
-    {
-        return false;
-    }
+    return HttpPolicyExtensions
+        .HandleTransientHttpError()
+        .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
 }

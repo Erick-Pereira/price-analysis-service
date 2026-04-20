@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Simcag.PriceAnalysisService.Application.Events;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Domain.Entities;
+using Simcag.PriceAnalysisService.Domain.Events;
 using Simcag.Shared.Messaging.Contracts;
 
 namespace Simcag.PriceAnalysisService.Application.UseCases;
