@@ -1,24 +1,20 @@
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
-WORKDIR /app
-EXPOSE 80
-EXPOSE 443
-
+# Build context: raiz do repositório
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
-COPY ["Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "Simcag.PriceAnalysisService.Api/"]
-COPY ["Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "Simcag.PriceAnalysisService.Application/"]
-COPY ["Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "Simcag.PriceAnalysisService.Domain/"]
-COPY ["Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "Simcag.PriceAnalysisService.Infrastructure/"]
+COPY ["shared/shared.csproj", "shared/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Api/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Application/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Domain/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/"]
+RUN dotnet restore "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
+COPY shared/ shared/
+COPY price-analysis-service/ price-analysis-service/
+RUN dotnet publish "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" -c ${BUILD_CONFIGURATION} -o /app/publish /p:UseAppHost=false
 
-RUN dotnet restore "Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
-COPY . .
-WORKDIR "/src/Simcag.PriceAnalysisService.Api"
-RUN dotnet build "Simcag.PriceAnalysisService.Api.csproj" -c Release -o /app/build
-
-FROM build AS publish
-RUN dotnet publish "Simcag.PriceAnalysisService.Api.csproj" -c Release -o /app/publish
-
-FROM base AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
+ENV ASPNETCORE_URLS=http://+:8080
+COPY --from=build /app/publish .
+EXPOSE 8080
 ENTRYPOINT ["dotnet", "Simcag.PriceAnalysisService.Api.dll"]

@@ -1,68 +1,144 @@
 using Microsoft.EntityFrameworkCore;
-using Simcag.ProcessingService.Domain.Events;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
+using Simcag.PriceAnalysisService.Application.UseCases;
 using Simcag.PriceAnalysisService.Application.Workers;
-using Simcag.PriceAnalysisService.Domain.Entities;
 using Simcag.PriceAnalysisService.Infrastructure.Persistence.DbContext;
 using Simcag.PriceAnalysisService.Infrastructure.Repositories;
+using Simcag.PriceAnalysisService.Infrastructure.Redis;
+using Simcag.Shared.Events;
+using Simcag.Shared.Messaging;
 using Simcag.Shared.Messaging.Configuration;
-using Simcag.Shared.Messaging.Contracts;
 using Simcag.Shared.Messaging.Extensions;
 using Polly;
 using Polly.Extensions.Http;
+using StackExchange.Redis;
 
-DotNetEnv.Env.Load();
+// Load .env so DB__* and others are in Environment; try content root first when known (e.g. IDE), then cwd / app base.
+static void LoadEnvFromCommonPaths(string? contentRoot = null)
+{
+    var dirs = new[] { contentRoot, Directory.GetCurrentDirectory(), AppContext.BaseDirectory }
+        .Where(d => !string.IsNullOrEmpty(d))!
+        .Cast<string>();
+    foreach (var dir in dirs.Distinct())
+    {
+        var p = Path.Combine(dir, ".env");
+        if (File.Exists(p))
+        {
+            DotNetEnv.Env.Load(p);
+            return;
+        }
+    }
+}
 
+LoadEnvFromCommonPaths();
 var builder = WebApplication.CreateBuilder(args);
+if (!string.IsNullOrEmpty(builder.Environment.ContentRootPath))
+    LoadEnvFromCommonPaths(builder.Environment.ContentRootPath);
+static string? GetEnv(params string[] keys)
+{
+    foreach (var k in keys)
+    {
+        var v = Environment.GetEnvironmentVariable(k);
+        if (!string.IsNullOrWhiteSpace(v))
+            return v;
+    }
+    return null;
+}
+
+static string GetNpgsqlConnectionString(IConfiguration configuration)
+{
+    var fromSettings = configuration.GetConnectionString("DefaultConnection");
+    if (!string.IsNullOrWhiteSpace(fromSettings))
+        return fromSettings;
+
+    // Env vars (DB__HOST) are exposed as DB:Host by ASP.NET configuration (aliases legados)
+    var host = configuration["DB:Host"] ?? GetEnv("DB__HOST", "DB_HOST") ?? "localhost";
+    var port = configuration["DB:Port"] ?? GetEnv("DB__PORT", "DB_PORT") ?? "5432";
+    var database = configuration["DB:Name"] ?? configuration["DB:Database"] ?? GetEnv("DB__NAME", "DB__DATABASE", "DB_NAME") ?? "simcag_pricing";
+    var user = configuration["DB:User"] ?? GetEnv("DB__USER", "DB_USER", "DB__USERNAME") ?? "postgres";
+    var password = configuration["DB:Password"] ?? GetEnv("DB__PASSWORD", "DB_PASSWORD") ?? "postgres";
+
+    return $"Host={host};Port={port};Database={database};Username={user};Password={password}";
+}
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo { Title = "SIMC-AG Service", Version = "v1" });
+    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
+    {
+        Name        = "Authorization",
+        In          = Microsoft.OpenApi.ParameterLocation.Header,
+        Type        = Microsoft.OpenApi.SecuritySchemeType.Http,
+        Scheme      = "bearer",
+        BearerFormat = "JWT",
+        Description = "Cole apenas o JWT (sem 'Bearer ')."
+    });
+    c.AddSecurityRequirement(document => new Microsoft.OpenApi.OpenApiSecurityRequirement
+    {
+        [new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", document)] = []
+    });
+});
 
-// Database
-var connectionString = $"Host={Environment.GetEnvironmentVariable("DB__HOST")};" +
-                      $"Port={Environment.GetEnvironmentVariable("DB__PORT")};" +
-                      $"Database={Environment.GetEnvironmentVariable("DB__NAME")};" +
-                      $"Username={Environment.GetEnvironmentVariable("DB__USER")};" +
-                      $"Password={Environment.GetEnvironmentVariable("DB__PASSWORD")}";
+// Database — DefaultConnection in appsettings.* + optional DB__* / .env
+var connectionString = GetNpgsqlConnectionString(builder.Configuration);
 
 builder.Services.AddDbContext<PriceAnalysisDbContext>(options =>
     options.UseNpgsql(connectionString));
 
 // Repositories
+builder.Services.AddScoped<IPriceRepository, Simcag.PriceAnalysisService.Infrastructure.Persistence.PriceRepository>();
 builder.Services.AddScoped<IPriceAnalysisRepository, PriceAnalysisRepository>();
 
 // Services
 builder.Services.AddScoped<IPriceAnalysisService, PriceAnalysisService>();
+builder.Services.AddScoped<DetectPriceVariationUseCase>();
+builder.Services.AddScoped<ProcessPriceDataUseCase>();
 
 // HTTP Client with Polly for Market Data Service
 builder.Services.AddHttpClient("MarketDataClient", client =>
 {
-    client.BaseAddress = new Uri(Environment.GetEnvironmentVariable("MARKETDATA_SERVICE_URL") ?? "http://localhost:8082");
+    client.BaseAddress = new Uri(
+        GetEnv("MARKET_DATA_API_URL", "MARKETDATA_SERVICE_URL", "MarketData__BaseUrl") ?? "http://localhost:8082");
     client.Timeout = TimeSpan.FromSeconds(10);
 })
 .AddPolicyHandler(GetRetryPolicy())
 .AddPolicyHandler(GetCircuitBreakerPolicy());
 
+// Redis: optional market reference cache
+var redisConnection = GetEnv("REDIS__CONNECTION", "REDIS_CONNECTION", "ConnectionStrings__Redis", "REDIS__CONNECTION_STRING");
+if (string.IsNullOrWhiteSpace(redisConnection))
+    builder.Services.AddSingleton<IMarketDataCacheService, NullMarketDataCacheService>();
+else
+{
+    builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisConnection));
+    builder.Services.AddSingleton<IMarketDataCacheService, RedisMarketDataCacheService>();
+}
+
 // Health Checks
 builder.Services.AddHealthChecks()
     .AddNpgSql(connectionString, name: "PostgreSQL");
 
-// RabbitMQ Configuration
+// RabbitMQ
 var rabbitMqOptions = new RabbitMqOptions
 {
-    Host = Environment.GetEnvironmentVariable("RABBITMQ__HOST") ?? "localhost",
-    Port = int.Parse(Environment.GetEnvironmentVariable("RABBITMQ__PORT") ?? "5672"),
-    UserName = Environment.GetEnvironmentVariable("RABBITMQ__USERNAME") ?? "guest",
-    Password = Environment.GetEnvironmentVariable("RABBITMQ__PASSWORD") ?? "guest",
-    VirtualHost = Environment.GetEnvironmentVariable("RABBITMQ__VIRTUALHOST") ?? "/"
+    Host = GetEnv("RABBITMQ__HOST", "RABBITMQ_HOST") ?? "localhost",
+    Port = int.Parse(GetEnv("RABBITMQ__PORT", "RABBITMQ_PORT") ?? "5672"),
+    UserName = GetEnv("RABBITMQ__USERNAME", "RABBITMQ_USERNAME") ?? "guest",
+    Password = GetEnv("RABBITMQ__PASSWORD", "RABBITMQ_PASSWORD") ?? "guest",
+    VirtualHost = GetEnv("RABBITMQ__VIRTUALHOST", "RABBITMQ_VIRTUALHOST") ?? "/"
 };
 
 builder.Services.AddRabbitMqMessaging(rabbitMqOptions);
-builder.Services.AddRabbitMqEventConsumer<DataProcessedEvent>("data.processed");
-builder.Services.AddRabbitMqEventPublisher<PriceAnalyzedEvent>("simcag-events");
+
+var eventsExchange = EventBusConstants.GetEventsExchangeName();
+builder.Services.AddRabbitMqEventConsumer<PriceDataProcessedEvent>(nameof(PriceDataProcessedEvent), eventsExchange);
+builder.Services.AddRabbitMqEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceAnalyzedEvent>(eventsExchange);
+builder.Services.AddRabbitMqEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent>(eventsExchange);
+builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent>(eventsExchange);
 
 // Background Services
 builder.Services.AddHostedService<DataProcessedEventConsumer>();

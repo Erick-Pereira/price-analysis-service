@@ -25,6 +25,14 @@ public class PriceAnalysisRepository : IPriceAnalysisRepository
             .FirstOrDefaultAsync(ct);
     }
 
+    public async Task<IEnumerable<PriceAnalysis>> GetAllAsync(CancellationToken ct)
+    {
+        return await _dbContext.PriceAnalyses
+            .AsNoTracking()
+            .OrderByDescending(pa => pa.AnalysisDate)
+            .ToListAsync(ct);
+    }
+
     public async Task AddAsync(PriceAnalysis analysis, CancellationToken ct)
     {
         await _dbContext.PriceAnalyses.AddAsync(analysis, ct);

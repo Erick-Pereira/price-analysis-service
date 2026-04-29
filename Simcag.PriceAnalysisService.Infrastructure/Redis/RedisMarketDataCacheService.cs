@@ -1,43 +1,49 @@
 using System;
+using System.Globalization;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using StackExchange.Redis;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 
-namespace Simcag.PriceAnalysisService.Infrastructure.Redis
+namespace Simcag.PriceAnalysisService.Infrastructure.Redis;
+
+public sealed class RedisMarketDataCacheService : IMarketDataCacheService
 {
-    public class RedisMarketDataCacheService : IMarketDataCacheService
+    private const int TtlHours = 1;
+    private readonly IDatabase _database;
+    private readonly ILogger<RedisMarketDataCacheService> _logger;
+
+    public RedisMarketDataCacheService(IConnectionMultiplexer redis, ILogger<RedisMarketDataCacheService> logger)
     {
-        private readonly IDatabase _database;
-        private const int TTL_HOURS = 1;
+        _database = redis.GetDatabase();
+        _logger = logger;
+    }
 
-        public RedisMarketDataCacheService(IConnectionMultiplexer redis)
+    public async Task<decimal?> GetPriceAsync(string cacheKey)
+    {
+        var redisKey = (RedisKey)$"md:price:{cacheKey}";
+        var value = await _database.StringGetAsync(redisKey);
+
+        if (!value.HasValue)
         {
-            _database = redis.GetDatabase();
+            _logger.LogDebug("Market cache miss for {Key}", cacheKey);
+            return null;
         }
 
-        public async Task<decimal?> GetPriceAsync(string productId)
-        {
-            var value = await _database.StringGetAsync(productId);
+        _logger.LogDebug("Market cache hit for {Key}", cacheKey);
+        var text = value.ToString();
+        return decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
 
-            if (!value.HasValue)
-            {
-                Console.WriteLine($"[CACHE MISS] Produto: {productId}");
-                return null;
-            }
-
-            Console.WriteLine($"[CACHE HIT] Produto: {productId}");
-            return (decimal)value;
-        }
-
-        public async Task SetPriceAsync(string productId, decimal price)
-        {
-            await _database.StringSetAsync(
-                productId,
-                price,
-                TimeSpan.FromHours(TTL_HOURS)
-            );
-
-            Console.WriteLine($"[CACHE SET] Produto: {productId} | Preço: {price}");
-        }
+    public async Task SetPriceAsync(string cacheKey, decimal price)
+    {
+        var redisKey = (RedisKey)$"md:price:{cacheKey}";
+        await _database.StringSetAsync(
+            redisKey,
+            (RedisValue)price.ToString(CultureInfo.InvariantCulture),
+            TimeSpan.FromHours(TtlHours));
+        _logger.LogDebug("Market cache set {Key} = {Price}", cacheKey, price);
     }
 }

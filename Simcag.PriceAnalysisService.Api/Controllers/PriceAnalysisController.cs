@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Npgsql;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Domain.Entities;
 
@@ -26,7 +27,7 @@ public class PriceAnalysisController : ControllerBase
     {
         try
         {
-            var result = await _priceAnalysisService.AnalyzePriceAsync(productId, cancellationToken);
+            var result = await _priceAnalysisService.GetLatestProductAnalysisAsync(productId, cancellationToken);
             return Ok(result);
         }
         catch (InvalidOperationException ex)
@@ -66,11 +67,35 @@ public class PriceAnalysisController : ControllerBase
             var results = await _priceAnalysisService.GetAllAnalysisAsync(cancellationToken);
             return Ok(results);
         }
+        catch (Exception ex) when (IsDatabaseUnavailable(ex))
+        {
+            _logger.LogWarning(ex, "Database unavailable while retrieving analysis results");
+            return StatusCode(503, new { error = "Database unavailable" });
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving all analysis results");
             return StatusCode(500, new { error = "Internal server error" });
         }
+    }
+
+    private static bool IsDatabaseUnavailable(Exception ex)
+    {
+        // Npgsql wraps connection failures as transient InvalidOperationException sometimes.
+        if (ex is NpgsqlException)
+            return true;
+        if (ex is InvalidOperationException && ex.InnerException is NpgsqlException)
+            return true;
+
+        var cur = ex;
+        while (cur != null)
+        {
+            if (cur is NpgsqlException)
+                return true;
+            cur = cur.InnerException;
+        }
+
+        return false;
     }
 
     [HttpPost("analyze")]
@@ -93,13 +118,13 @@ public class PriceAnalysisController : ControllerBase
         // 📊 Cálculo da diferença (%)
         var difference = ((request.PricePaid - marketPrice) / marketPrice) * 100;
 
-        // 🚨 Classificação
+        // Alinhado ao limiar do serviço (15% / 30%)
         string status;
-
-        if (difference > 50)
-            status = "SUPERFATURADO";
-        else if (difference > 20)
-            status = "SUSPEITO";
+        var absD = Math.Abs(difference);
+        if (absD > 30)
+            status = "CRITICO";
+        else if (absD > 15)
+            status = "ALERTA";
         else
             status = "NORMAL";
 
@@ -117,9 +142,8 @@ public class PriceAnalysisController : ControllerBase
     }
 }
 
-// 📥 Modelo correto da requisição
-public class PriceRequest
+public sealed class PriceRequest
 {
-    public string Name { get; set; }
+    public string Name { get; set; } = string.Empty;
     public decimal PricePaid { get; set; }
 }

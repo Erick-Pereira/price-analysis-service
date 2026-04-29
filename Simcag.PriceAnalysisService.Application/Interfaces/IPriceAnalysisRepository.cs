@@ -7,6 +7,7 @@ namespace Simcag.PriceAnalysisService.Application.Interfaces;
 public interface IPriceAnalysisRepository
 {
     Task<PriceAnalysis?> GetLatestByProductIdAsync(string productId, CancellationToken ct);
+    Task<IEnumerable<PriceAnalysis>> GetAllAsync(CancellationToken ct);
     Task AddAsync(PriceAnalysis analysis, CancellationToken ct);
     Task<IEnumerable<PriceAnalysis>> GetAnomaliesAsync(int page, int pageSize, CancellationToken ct);
     Task<int> GetAnomaliesCountAsync(CancellationToken ct);

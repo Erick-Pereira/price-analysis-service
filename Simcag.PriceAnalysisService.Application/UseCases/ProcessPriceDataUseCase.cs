@@ -1,10 +1,14 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Simcag.PriceAnalysisService.Application.Events;
 using Simcag.PriceAnalysisService.Application.Interfaces;
+using Simcag.PriceAnalysisService.Domain;
 using Simcag.PriceAnalysisService.Domain.Entities;
 using Simcag.PriceAnalysisService.Domain.Events;
 using Simcag.Shared.Messaging.Contracts;
+using PriceAnalyzedEvent = Simcag.PriceAnalysisService.Domain.Events.PriceAnalyzedEvent;
 
 namespace Simcag.PriceAnalysisService.Application.UseCases;
 
@@ -14,29 +18,36 @@ public sealed class ProcessPriceDataUseCase
     private readonly IPriceAnalysisService _priceAnalysisService;
     private readonly DetectPriceVariationUseCase _variationUseCase;
     private readonly IEventPublisher<PriceAnalyzedEvent> _priceAnalyzedPublisher;
-    private readonly IEventPublisher<PriceUpdatedEvent> _priceUpdatedPublisher;
+    private readonly IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> _priceUpdatedPublisher;
+    private readonly IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> _priceAnalysisCompletedPublisher;
 
     public ProcessPriceDataUseCase(
         IPriceRepository priceRepository,
         IPriceAnalysisService priceAnalysisService,
         DetectPriceVariationUseCase variationUseCase,
         IEventPublisher<PriceAnalyzedEvent> priceAnalyzedPublisher,
-        IEventPublisher<PriceUpdatedEvent> priceUpdatedPublisher)
+        IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> priceUpdatedPublisher,
+        IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> priceAnalysisCompletedPublisher)
     {
         _priceRepository = priceRepository;
         _priceAnalysisService = priceAnalysisService;
         _variationUseCase = variationUseCase;
         _priceAnalyzedPublisher = priceAnalyzedPublisher;
         _priceUpdatedPublisher = priceUpdatedPublisher;
+        _priceAnalysisCompletedPublisher = priceAnalysisCompletedPublisher;
     }
 
     public async Task HandleAsync(DataProcessedEvent input, CancellationToken cancellationToken)
     {
-        if (input == null)
-            throw new ArgumentNullException(nameof(input));
+        ArgumentNullException.ThrowIfNull(input);
 
         if (await _priceRepository.ExistsByEventIdAsync(input.EventId, cancellationToken))
             return;
+
+        var prior = await _priceRepository.GetPriceHistoryAsync(input.ProductId, cancellationToken);
+        var historicalAveragePrior = prior is { Count: > 0 }
+            ? prior.Average(h => h.Price)
+            : (decimal?)null;
 
         var priceHistory = new PriceHistory(
             input.EventId,
@@ -49,30 +60,93 @@ public sealed class ProcessPriceDataUseCase
         await _priceRepository.AddPriceHistoryAsync(priceHistory, cancellationToken);
         await _priceRepository.MarkEventAsProcessedAsync(input.EventId, cancellationToken);
 
-        var analysisResult = await _priceAnalysisService.AnalyzePriceAsync(input.ProductId, cancellationToken);
+        var analysisResult = await _priceAnalysisService.AnalyzePriceAsync(
+            input,
+            historicalAveragePrior,
+            cancellationToken);
 
         var variation = _variationUseCase.Execute(analysisResult, input.Price);
-        if (variation != null)
+        if (variation is not null)
         {
             await _priceRepository.SaveAnomalyAsync(variation, cancellationToken);
         }
 
+        var trend = PriceTrend.Calculate(input.Price, analysisResult.MarketAverage);
+
+        var historyList = await _priceRepository.GetPriceHistoryAsync(input.ProductId, cancellationToken) ?? new List<PriceHistory>();
+        var points = historyList
+            .Select(h => h.Price)
+            .ToList();
+        if (points.Count == 0)
+            points.Add(input.Price);
+
+        var productName = string.IsNullOrWhiteSpace(input.ProductName) ? input.ProductId : input.ProductName;
+        var category = !string.IsNullOrWhiteSpace(input.Category)
+            ? input.Category
+            : (string.IsNullOrWhiteSpace(input.Market) ? input.Source : input.Market);
+        var confidence = analysisResult.MarketAverage > 0m ? 0.8 : 0.2;
+
         await _priceAnalyzedPublisher.PublishAsync(new PriceAnalyzedEvent
         {
+            ExpenseId = input.ExpenseId,
+            TenantId = input.TenantId,
             ProductId = analysisResult.ProductId,
-            AveragePrice = analysisResult.AveragePrice,
+            ProductName = productName,
+            Category = category,
+            Region = input.Region,
+            SupplierId = input.SupplierId,
+            LastPrice = input.Price,
+            MarketAverage = analysisResult.MarketAverage,
+            HistoricalAverage = analysisResult.HistoricalAverage,
+            DeviationPercentage = analysisResult.DeviationPercentage ?? 0m,
+            PriceVariation = analysisResult.DeviationPercentage ?? 0m,
+            Severity = PriceDeviationPolicy.ToAuditString(analysisResult.Severity),
+            AveragePrice = analysisResult.MarketAverage,
             MedianPrice = analysisResult.MedianPrice,
             StandardDeviation = analysisResult.StandardDeviation,
             SafeZoneMin = analysisResult.SafeZone.Min,
             SafeZoneMax = analysisResult.SafeZone.Max,
+            Trend = trend,
             AnalysisDate = analysisResult.AnalysisDate,
             HasAnomalies = analysisResult.HasAnomalies
         }, cancellationToken);
 
-        await _priceUpdatedPublisher.PublishAsync(new PriceUpdatedEvent
+        await _priceUpdatedPublisher.PublishAsync(new Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent
         {
             ProductId = analysisResult.ProductId,
             UpdatedAt = DateTime.UtcNow
         }, cancellationToken);
+
+        await _priceAnalysisCompletedPublisher.PublishAsync(new Simcag.Shared.Events.PriceAnalysisCompletedEvent
+        {
+            ProductId = input.ProductId,
+            ProductName = productName,
+            Category = category,
+            SupplierId = string.IsNullOrWhiteSpace(input.SupplierId) ? null : input.SupplierId,
+            SupplierCategoryShare = 0m,
+            ProductCost = input.Price,
+            LastPrice = input.Price,
+            MarketPrice = analysisResult.MarketAverage,
+            AveragePrice = analysisResult.HistoricalAverage,
+            PriceHistory = points,
+            PriceVariation = analysisResult.DeviationPercentage ?? 0m,
+            Trend = trend,
+            StandardDeviation = analysisResult.StandardDeviation,
+            DataPointsCount = points.Count,
+            AnalyzedAt = DateTime.UtcNow,
+            ConfidenceScore = confidence
+        }, cancellationToken);
+    }
+}
+
+internal static class PriceTrend
+{
+    public static string Calculate(decimal lastPrice, decimal marketAverage)
+    {
+        if (marketAverage <= 0m) return "UNKNOWN";
+        var variation = (lastPrice - marketAverage) / marketAverage * 100m;
+        if (variation >= PriceDeviationPolicy.TrendUpPercent) return "UP";
+        if (variation <= PriceDeviationPolicy.TrendDownPercent) return "DOWN";
+        return "STABLE";
     }
 }

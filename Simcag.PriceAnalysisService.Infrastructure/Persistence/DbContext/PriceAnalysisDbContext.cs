@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Simcag.PriceAnalysisService.Domain.Entities;
+using Simcag.PriceAnalysisService.Domain.Enums;
 
 namespace Simcag.PriceAnalysisService.Infrastructure.Persistence.DbContext;
 
@@ -31,6 +33,16 @@ public class PriceAnalysisDbContext : Microsoft.EntityFrameworkCore.DbContext
 
             entity.Property(e => e.DeviationPercentage)
                 .HasColumnType("decimal(5,2)");
+
+            entity.Property(e => e.HistoricalAverage)
+                .HasColumnType("decimal(18,2)");
+
+            var severity = new ValueConverter<DeviationSeverity, int>(
+                v => (int)v,
+                v => (DeviationSeverity)v);
+            entity.Property(e => e.Severity)
+                .HasConversion(severity)
+                .IsRequired();
 
             entity.Property(e => e.AnalysisDate)
                 .IsRequired();

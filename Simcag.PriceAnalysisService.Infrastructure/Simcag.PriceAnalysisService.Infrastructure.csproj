@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -9,7 +9,12 @@
 <ItemGroup>
     <ProjectReference Include="..\Simcag.PriceAnalysisService.Application\Simcag.PriceAnalysisService.Application.csproj" />
     <ProjectReference Include="..\Simcag.PriceAnalysisService.Domain\Simcag.PriceAnalysisService.Domain.csproj" />
-    <PackageReference Include="Simcag.Shared" Version="1.0.0" />
+    <ProjectReference Include="..\..\processing-service\Simcag.ProcessingService.Domain\Simcag.ProcessingService.Domain.csproj" />
+    <ProjectReference Include="..\..\shared\shared.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageReference Include="StackExchange.Redis" Version="2.12.14" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
