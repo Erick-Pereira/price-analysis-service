@@ -1,5 +1,6 @@
 # Secrets: DOCKER_USERNAME, DOCKER_PASSWORD
-# Monorepo: raiz com shared/ + price-analysis-service/. Repo só do serviço: shared/ + Simcag.PriceAnalysisService.* na raiz.
+# Monorepo: raiz com shared/ + price-analysis-service/.
+# Repo só do serviço: sem shared/ na raiz, o CI tenta clonar https://github.com/<dono>/simcag (só pasta shared/). Monorepo privado: submodule ou PAT (ver passo).
 
 name: price-analysis-service
 
@@ -27,6 +28,9 @@ on:
       - "Simcag.PriceAnalysisService.Tests/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,6 +39,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Obter shared se em falta (repo só do serviço)
+        shell: bash
+        env:
+          SIMCAG_MONOREPO: ${{ format('{0}/simcag', github.repository_owner) }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -f shared/shared.csproj ]] || [[ -f price-analysis-service/Simcag.PriceAnalysisService.Api/Dockerfile ]]; then
+            exit 0
+          fi
+          echo "A clonar ${SIMCAG_MONOREPO} (shallow) para copiar shared/…"
+          rm -rf .simcag-mono-tmp
+          if git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${SIMCAG_MONOREPO}.git" .simcag-mono-tmp; then
+            :
+          else
+            rm -rf .simcag-mono-tmp
+            git clone --depth 1 "https://github.com/${SIMCAG_MONOREPO}.git" .simcag-mono-tmp
+          fi
+          [[ -d .simcag-mono-tmp/shared ]] || { echo "::error::O repositório ${SIMCAG_MONOREPO} não tem shared/ na raiz (ou o clone falhou). Use submodule shared ou renomeie o monorepo para simcag."; exit 1; }
+          mv .simcag-mono-tmp/shared .
+          rm -rf .simcag-mono-tmp
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -57,6 +82,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Obter shared se em falta (repo só do serviço)
+        shell: bash
+        env:
+          SIMCAG_MONOREPO: ${{ format('{0}/simcag', github.repository_owner) }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ -f shared/shared.csproj ]] || [[ -f price-analysis-service/Simcag.PriceAnalysisService.Api/Dockerfile ]]; then
+            exit 0
+          fi
+          echo "A clonar ${SIMCAG_MONOREPO} (shallow) para copiar shared/…"
+          rm -rf .simcag-mono-tmp
+          if git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${SIMCAG_MONOREPO}.git" .simcag-mono-tmp; then
+            :
+          else
+            rm -rf .simcag-mono-tmp
+            git clone --depth 1 "https://github.com/${SIMCAG_MONOREPO}.git" .simcag-mono-tmp
+          fi
+          [[ -d .simcag-mono-tmp/shared ]] || { echo "::error::O repositório ${SIMCAG_MONOREPO} não tem shared/ na raiz (ou o clone falhou). Use submodule shared ou renomeie o monorepo para simcag."; exit 1; }
+          mv .simcag-mono-tmp/shared .
+          rm -rf .simcag-mono-tmp
       - name: Resolve Docker context (monorepo vs. service-only repo)
         id: ctx
         shell: bash
@@ -73,7 +119,7 @@ jobs:
             exit 1
           fi
           if [[ ! -f shared/shared.csproj ]]; then
-            echo "::error::Falta shared/shared.csproj na raiz. Use git submodule, ou copie shared/ para este repositório (checkout com submodules: recursive)."
+            echo "::error::Falta shared/shared.csproj após o passo de clone. Confirme monorepo em github.com/<dono>/simcag com pasta shared/, ou submodule/cópia na raiz."
             exit 1
           fi
           mkdir -p .docker-layout/price-analysis-service
