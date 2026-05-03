@@ -32,6 +32,30 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Ensure shared exists
+        shell: bash
+        env:
+          SIMCAG_MONOREPO_REPOSITORY: ${{ vars.SIMCAG_MONOREPO_REPOSITORY }}
+          SIMCAG_MONOREPO_CLONE_TOKEN: ${{ secrets.SIMCAG_MONOREPO_CLONE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -f shared/shared.csproj ]]; then
+            exit 0
+          fi
+          if [[ -z "${SIMCAG_MONOREPO_REPOSITORY:-}" ]]; then
+            echo "::error::Falta shared/ na raiz. Opções: (1) git submodule com shared, (2) commitar a pasta shared/ neste repo, (3) no GitHub: Settings → Secrets and variables → Actions → Variables → crie SIMCAG_MONOREPO_REPOSITORY com o monorepo (ex.: shelow/simcag) para o CI clonar só o que precisa. Monorepo privado: secret SIMCAG_MONOREPO_CLONE_TOKEN (PAT com leitura do repositório)."
+            exit 1
+          fi
+          echo "A obter shared/ a partir de ${SIMCAG_MONOREPO_REPOSITORY}…"
+          rm -rf .simcag-mono-tmp
+          if [[ -n "${SIMCAG_MONOREPO_CLONE_TOKEN:-}" ]]; then
+            git clone --depth 1 "https://x-access-token:${SIMCAG_MONOREPO_CLONE_TOKEN}@github.com/${SIMCAG_MONOREPO_REPOSITORY}.git" .simcag-mono-tmp
+          else
+            git clone --depth 1 "https://github.com/${SIMCAG_MONOREPO_REPOSITORY}.git" .simcag-mono-tmp
+          fi
+          [[ -d .simcag-mono-tmp/shared ]] || { echo "::error::O repositório ${SIMCAG_MONOREPO_REPOSITORY} não contém a pasta shared/ na raiz."; exit 1; }
+          mv .simcag-mono-tmp/shared .
+          rm -rf .simcag-mono-tmp
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -54,6 +78,30 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Ensure shared exists
+        shell: bash
+        env:
+          SIMCAG_MONOREPO_REPOSITORY: ${{ vars.SIMCAG_MONOREPO_REPOSITORY }}
+          SIMCAG_MONOREPO_CLONE_TOKEN: ${{ secrets.SIMCAG_MONOREPO_CLONE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -f shared/shared.csproj ]]; then
+            exit 0
+          fi
+          if [[ -z "${SIMCAG_MONOREPO_REPOSITORY:-}" ]]; then
+            echo "::error::Falta shared/ na raiz. Opções: (1) git submodule com shared, (2) commitar a pasta shared/ neste repo, (3) no GitHub: Settings → Secrets and variables → Actions → Variables → crie SIMCAG_MONOREPO_REPOSITORY com o monorepo (ex.: shelow/simcag) para o CI clonar só o que precisa. Monorepo privado: secret SIMCAG_MONOREPO_CLONE_TOKEN (PAT com leitura do repositório)."
+            exit 1
+          fi
+          echo "A obter shared/ a partir de ${SIMCAG_MONOREPO_REPOSITORY}…"
+          rm -rf .simcag-mono-tmp
+          if [[ -n "${SIMCAG_MONOREPO_CLONE_TOKEN:-}" ]]; then
+            git clone --depth 1 "https://x-access-token:${SIMCAG_MONOREPO_CLONE_TOKEN}@github.com/${SIMCAG_MONOREPO_REPOSITORY}.git" .simcag-mono-tmp
+          else
+            git clone --depth 1 "https://github.com/${SIMCAG_MONOREPO_REPOSITORY}.git" .simcag-mono-tmp
+          fi
+          [[ -d .simcag-mono-tmp/shared ]] || { echo "::error::O repositório ${SIMCAG_MONOREPO_REPOSITORY} não contém a pasta shared/ na raiz."; exit 1; }
+          mv .simcag-mono-tmp/shared .
+          rm -rf .simcag-mono-tmp
       - name: Resolve Docker context (monorepo vs. service-only repo)
         id: ctx
         shell: bash
@@ -69,8 +117,8 @@ jobs:
             echo "::error::Dockerfile não encontrado em layout monorepo nem pastas Simcag.* na raiz."
             exit 1
           fi
-          if [[ ! -d shared ]]; then
-            echo "::error::Na raiz falta a pasta 'shared' (ProjectReference). Inclua como submodule ou copie do monorepo simcag."
+          if [[ ! -f shared/shared.csproj ]]; then
+            echo "::error::shared/shared.csproj em falta após o passo de preparação."
             exit 1
           fi
           mkdir -p .docker-layout/price-analysis-service
