@@ -1,48 +1,69 @@
-# Build context: raiz do repositório
-ARG DOTNET_SDK_VERSION=10.0
-ARG DOTNET_RUNTIME_VERSION=10.0
+# ============================================================================
+# Multi-stage — contexto de build: raiz do monorepo simcag
+# ============================================================================
+# Inclui: shared/, price-analysis-service/ (sem dependência de outros serviços).
+# Para “repo só do serviço” + Simcag.Shared via GitHub Packages, ver padrão
+# do Ingestion (ARG TOKEN + dotnet nuget add source).
+# ============================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_SDK_VERSION} AS build
-ARG BUILD_CONFIGURATION=Release
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
+
 WORKDIR /src
 
-# Copy project files (layer 1)
-COPY ["shared/shared.csproj", "shared/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Api/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Application/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Domain/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/"]
+ARG BUILD_CONFIGURATION=Release
 
-# Restore (layer 2)
+# Opcional: feed privado (descomente se migrar shared para PackageReference Simcag.Shared)
+# ARG NUGET_AUTH_TOKEN
+# RUN dotnet nuget add source "https://nuget.pkg.github.com/OWNER/index.json" ...
+
+# Camada 1: só .csproj (cache de restore)
+COPY ["shared/shared.csproj", "shared/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Domain/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Application/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/"]
+COPY ["price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Api/"]
+
 RUN dotnet restore "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
 
-# Copy source (layer 3)
+# Camada 2: código-fonte
 COPY shared/ shared/
 COPY price-analysis-service/ price-analysis-service/
 
-# Publish (layer 4)
-RUN dotnet publish "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" -c ${BUILD_CONFIGURATION} -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" \
+    --configuration "${BUILD_CONFIGURATION}" \
+    --output /app/publish \
+    --no-restore \
+    /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_RUNTIME_VERSION} AS final
+# ============================================================================
+# Runtime
+# ============================================================================
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 
 LABEL maintainer="SIMCAG Team <dev@simcag.com>"
-LABEL description="Price Analysis Service - Price analysis and comparison"
-LABEL version="1.0.0"
+LABEL description="Price Analysis Service"
 
 WORKDIR /app
 
-ENV ASPNETCORE_URLS=http://+:8080
-ENV DOTNET_RUNNING_IN_CONTAINER=true
-ENV ASPNETCORE_ENVIRONMENT=Production
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
-COPY --from=build /app/publish .
+COPY --from=builder /app/publish .
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && chown -R appuser:appgroup /app
+
+ENV ASPNETCORE_URLS=http://+:8080 \
+    DOTNET_RUNNING_IN_CONTAINER=true \
+    ASPNETCORE_ENVIRONMENT=Production
 
 EXPOSE 8080
 
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8080/health >/dev/null || exit 1
 
 ENTRYPOINT ["dotnet", "Simcag.PriceAnalysisService.Api.dll"]
