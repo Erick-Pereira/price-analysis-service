@@ -1,9 +1,7 @@
 # ============================================================================
-# Multi-stage — contexto de build: raiz do monorepo simcag
-# ============================================================================
-# Inclui: shared/, price-analysis-service/ (sem dependência de outros serviços).
-# Para “repo só do serviço” + Simcag.Shared via GitHub Packages, ver padrão
-# do Ingestion (ARG TOKEN + dotnet nuget add source).
+# Multi-stage — contexto de build: raiz da pasta price-analysis-service (monorepo)
+# ou raiz do repositório só do serviço (pastas Simcag.* no topo).
+# Simcag.Shared vem do GitHub Packages (TOKEN + NUGET_GITHUB_OWNER no build).
 # ============================================================================
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
@@ -11,37 +9,36 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
 WORKDIR /src
 
 ARG BUILD_CONFIGURATION=Release
+ARG TOKEN
+ARG NUGET_GITHUB_OWNER
 
-# Opcional: feed privado (descomente se migrar shared para PackageReference Simcag.Shared)
-# ARG NUGET_AUTH_TOKEN
-# RUN dotnet nuget add source "https://nuget.pkg.github.com/OWNER/index.json" ...
+RUN if [ -n "${TOKEN:-}" ] && [ -n "${NUGET_GITHUB_OWNER:-}" ]; then \
+    dotnet nuget add source "https://nuget.pkg.github.com/${NUGET_GITHUB_OWNER}/index.json" \
+      --name github \
+      --username "${NUGET_GITHUB_OWNER}" \
+      --password "${TOKEN}" \
+      --store-password-in-clear-text; \
+  fi
 
-# Camada 1: só .csproj (cache de restore)
-COPY ["shared/shared.csproj", "shared/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Domain/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Application/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Infrastructure/"]
-COPY ["price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "price-analysis-service/Simcag.PriceAnalysisService.Api/"]
+COPY ["Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj", "Simcag.PriceAnalysisService.Api/"]
+COPY ["Simcag.PriceAnalysisService.Application/Simcag.PriceAnalysisService.Application.csproj", "Simcag.PriceAnalysisService.Application/"]
+COPY ["Simcag.PriceAnalysisService.Domain/Simcag.PriceAnalysisService.Domain.csproj", "Simcag.PriceAnalysisService.Domain/"]
+COPY ["Simcag.PriceAnalysisService.Infrastructure/Simcag.PriceAnalysisService.Infrastructure.csproj", "Simcag.PriceAnalysisService.Infrastructure/"]
 
-RUN dotnet restore "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
+RUN dotnet restore "Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj"
 
-# Camada 2: código-fonte
-COPY shared/ shared/
-COPY price-analysis-service/ price-analysis-service/
+COPY ["Simcag.PriceAnalysisService.Api/", "Simcag.PriceAnalysisService.Api/"]
+COPY ["Simcag.PriceAnalysisService.Application/", "Simcag.PriceAnalysisService.Application/"]
+COPY ["Simcag.PriceAnalysisService.Domain/", "Simcag.PriceAnalysisService.Domain/"]
+COPY ["Simcag.PriceAnalysisService.Infrastructure/", "Simcag.PriceAnalysisService.Infrastructure/"]
 
-RUN dotnet publish "price-analysis-service/Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" \
+RUN dotnet publish "Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.Api.csproj" \
     --configuration "${BUILD_CONFIGURATION}" \
     --output /app/publish \
     --no-restore \
     /p:UseAppHost=false
 
-# ============================================================================
-# Runtime
-# ============================================================================
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
-
-LABEL maintainer="SIMCAG Team <dev@simcag.com>"
-LABEL description="Price Analysis Service"
 
 WORKDIR /app
 
@@ -55,9 +52,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && chown -R appuser:appgroup /app
 
-ENV ASPNETCORE_URLS=http://+:8080 \
+ENV ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_RUNNING_IN_CONTAINER=true \
-    ASPNETCORE_ENVIRONMENT=Production
+    ASPNETCORE_URLS=http://+:8080
 
 EXPOSE 8080
 
