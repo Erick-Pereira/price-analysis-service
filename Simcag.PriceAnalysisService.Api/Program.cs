@@ -10,6 +10,7 @@ using Simcag.Shared.Events;
 using Simcag.Shared.Messaging;
 using Simcag.Shared.Messaging.Configuration;
 using Simcag.Shared.Messaging.Extensions;
+using Simcag.Shared.Hosting;
 using Polly;
 using Polly.Extensions.Http;
 using StackExchange.Redis;
@@ -25,16 +26,19 @@ static void LoadEnvFromCommonPaths(string? contentRoot = null)
         var p = Path.Combine(dir, ".env");
         if (File.Exists(p))
         {
-            DotNetEnv.Env.Load(p);
+            DotNetEnv.Env.NoClobber().Load(p);
             return;
         }
     }
 }
 
 LoadEnvFromCommonPaths();
+ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 var builder = WebApplication.CreateBuilder(args);
 if (!string.IsNullOrEmpty(builder.Environment.ContentRootPath))
     LoadEnvFromCommonPaths(builder.Environment.ContentRootPath);
+ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
+ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 static string? GetEnv(params string[] keys)
 {
     foreach (var k in keys)
@@ -143,6 +147,8 @@ builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalysisCom
 // Background Services
 builder.Services.AddHostedService<DataProcessedEventConsumer>();
 
+ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
+ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
