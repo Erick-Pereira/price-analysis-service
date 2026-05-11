@@ -23,6 +23,9 @@ public class DataProcessedEvent : BaseEvent
     public string Source { get; init; } = string.Empty;
     public string Market { get; init; } = string.Empty;
 
+    /// <summary>Documento de ingestão (para correlacionar auditoria no processing).</summary>
+    public string? RawDocumentId { get; init; }
+
     public DataProcessedEvent() { }
 
     public DataProcessedEvent(Guid eventId, string productId, decimal price, DateTime timestamp, string source, string market)

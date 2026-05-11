@@ -8,7 +8,6 @@ using Simcag.PriceAnalysisService.Domain;
 using Simcag.PriceAnalysisService.Domain.Entities;
 using Simcag.PriceAnalysisService.Domain.Events;
 using Simcag.Shared.Messaging.Contracts;
-using PriceAnalyzedEvent = Simcag.PriceAnalysisService.Domain.Events.PriceAnalyzedEvent;
 
 namespace Simcag.PriceAnalysisService.Application.UseCases;
 
@@ -17,7 +16,7 @@ public sealed class ProcessPriceDataUseCase
     private readonly IPriceRepository _priceRepository;
     private readonly IPriceAnalysisService _priceAnalysisService;
     private readonly DetectPriceVariationUseCase _variationUseCase;
-    private readonly IEventPublisher<PriceAnalyzedEvent> _priceAnalyzedPublisher;
+    private readonly IEventPublisher<global::Simcag.Shared.Events.PriceAnalyzedEvent> _priceAnalyzedPublisher;
     private readonly IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> _priceUpdatedPublisher;
     private readonly IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> _priceAnalysisCompletedPublisher;
 
@@ -25,7 +24,7 @@ public sealed class ProcessPriceDataUseCase
         IPriceRepository priceRepository,
         IPriceAnalysisService priceAnalysisService,
         DetectPriceVariationUseCase variationUseCase,
-        IEventPublisher<PriceAnalyzedEvent> priceAnalyzedPublisher,
+        IEventPublisher<global::Simcag.Shared.Events.PriceAnalyzedEvent> priceAnalyzedPublisher,
         IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> priceUpdatedPublisher,
         IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> priceAnalysisCompletedPublisher)
     {
@@ -86,8 +85,9 @@ public sealed class ProcessPriceDataUseCase
             : (string.IsNullOrWhiteSpace(input.Market) ? input.Source : input.Market);
         var confidence = analysisResult.MarketAverage > 0m ? 0.8 : 0.2;
 
-        await _priceAnalyzedPublisher.PublishAsync(new PriceAnalyzedEvent
+        await _priceAnalyzedPublisher.PublishAsync(new global::Simcag.Shared.Events.PriceAnalyzedEvent
         {
+            RawDocumentId = input.RawDocumentId,
             ExpenseId = input.ExpenseId,
             TenantId = input.TenantId,
             ProductId = analysisResult.ProductId,

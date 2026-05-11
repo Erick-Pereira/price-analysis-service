@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
 using Simcag.PriceAnalysisService.Application.UseCases;
@@ -140,16 +142,32 @@ builder.Services.AddRabbitMqMessaging(rabbitMqOptions);
 
 var eventsExchange = EventBusConstants.GetEventsExchangeName();
 builder.Services.AddRabbitMqEventConsumer<PriceDataProcessedEvent>(nameof(PriceDataProcessedEvent), eventsExchange);
-builder.Services.AddRabbitMqEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceAnalyzedEvent>(eventsExchange);
+builder.Services.AddRabbitMqEventConsumer<EnrichedFinancialDataEvent>(EventNames.EnrichedFinancialData, eventsExchange);
+builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalyzedEvent>(eventsExchange);
 builder.Services.AddRabbitMqEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent>(eventsExchange);
 builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent>(eventsExchange);
 
 // Background Services
 builder.Services.AddHostedService<DataProcessedEventConsumer>();
+builder.Services.AddHostedService<EnrichedFinancialDataConsumer>();
 
 ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 var app = builder.Build();
+
+// Cria/atualiza tabelas (PriceAnalyses, etc.). Sem isto, PG devolve 42P01 ao gravar análise.
+using (var scope = app.Services.CreateScope())
+{
+    try
+    {
+        var db = scope.ServiceProvider.GetRequiredService<PriceAnalysisDbContext>();
+        await db.Database.MigrateAsync();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Falha ao aplicar migrations do PriceAnalysisDbContext.");
+    }
+}
 
 if (app.Environment.IsDevelopment())
 {

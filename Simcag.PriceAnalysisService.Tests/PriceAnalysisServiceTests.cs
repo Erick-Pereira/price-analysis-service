@@ -227,7 +227,7 @@ public class PriceAnalysisServiceTests
                 "SendAsync",
                 ItExpr.Is<HttpRequestMessage>(req =>
                     req.RequestUri != null
-                    && req.RequestUri.ToString().Contains("marketdata", StringComparison.OrdinalIgnoreCase)
+                    && req.RequestUri.ToString().Contains("market-data", StringComparison.OrdinalIgnoreCase)
                     && (req.RequestUri.ToString().Contains(enc, StringComparison.Ordinal)
                         || req.RequestUri.ToString().Contains(productNameOrFragment, StringComparison.Ordinal))),
                 ItExpr.IsAny<CancellationToken>())

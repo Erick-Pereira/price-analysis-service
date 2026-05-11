@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
@@ -45,8 +46,8 @@ public class PriceAnalysisService : IPriceAnalysisService
         _logger.LogInformation("Starting price analysis for product {ProductId}", data.ProductId);
 
         var productName = string.IsNullOrWhiteSpace(data.ProductName) ? data.ProductId : data.ProductName;
-        var cacheKey = BuildMarketDataCacheKey(data.Region, productName);
-        var marketPrice = await GetMarketPriceWithCacheAsync(cacheKey, productName, ct);
+        var cacheKey = BuildMarketDataCacheKey(data.Region, data.ProductId, productName);
+        var marketPrice = await GetMarketPriceWithCacheAsync(cacheKey, productName, data.Price, ct);
 
         var history = await _priceRepository.GetPriceHistoryAsync(data.ProductId, ct) ?? new List<PriceHistory>();
         var pricePoints = history
@@ -216,8 +217,12 @@ public class PriceAnalysisService : IPriceAnalysisService
         return rows.Select(MapStoredAnalysisToApiResult).ToList();
     }
 
-    private static string BuildMarketDataCacheKey(string region, string productName) =>
-        string.IsNullOrWhiteSpace(region) ? productName : $"{region.Trim()}|{productName}";
+    /// <summary>Inclui <paramref name="productId"/> para evitar colisão entre linhas com a mesma descrição em documentos diferentes.</summary>
+    private static string BuildMarketDataCacheKey(string region, string productId, string productName)
+    {
+        var core = $"{productId.Trim()}|{productName.Trim()}";
+        return string.IsNullOrWhiteSpace(region) ? core : $"{region.Trim()}|{core}";
+    }
 
     private static decimal? ComputeHistoricalAverageExcludingEvent(IReadOnlyList<PriceHistory> history, Guid eventId)
     {
@@ -229,24 +234,29 @@ public class PriceAnalysisService : IPriceAnalysisService
         return others.Average(h => h.Price);
     }
 
-    private async Task<decimal?> GetMarketPriceWithCacheAsync(string cacheKey, string productName, CancellationToken ct)
+    private async Task<decimal?> GetMarketPriceWithCacheAsync(
+        string cacheKey,
+        string productName,
+        decimal lineDeclaredPrice,
+        CancellationToken ct)
     {
         var cached = await _marketDataCache.GetPriceAsync(cacheKey);
         if (cached.HasValue)
             return cached.Value;
-        var http = await GetMarketPriceFromServiceAsync(productName, ct);
+        var http = await GetMarketPriceFromServiceAsync(productName, lineDeclaredPrice, ct);
         if (http.HasValue)
             await _marketDataCache.SetPriceAsync(cacheKey, http.Value);
         return http;
     }
 
-    private async Task<decimal?> GetMarketPriceFromServiceAsync(string productName, CancellationToken ct)
+    private async Task<decimal?> GetMarketPriceFromServiceAsync(string productName, decimal lineDeclaredPrice, CancellationToken ct)
     {
         try
         {
             var client = _httpClientFactory.CreateClient("MarketDataClient");
-            var response = await client.GetAsync(
-                $"/api/marketdata/price?productName={Uri.EscapeDataString(productName)}", ct);
+            var qs =
+                $"productName={Uri.EscapeDataString(productName)}&declaredReferenceBrl={Uri.EscapeDataString(lineDeclaredPrice.ToString(CultureInfo.InvariantCulture))}";
+            var response = await client.GetAsync($"/api/market-data/price?{qs}", ct);
             if (response.IsSuccessStatusCode)
             {
                 var result = await response.Content.ReadFromJsonAsync<MarketDataResponse>(ct);
