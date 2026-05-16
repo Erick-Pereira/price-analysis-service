@@ -5,6 +5,7 @@ using Simcag.PriceAnalysisService.Application.Mapping;
 using Simcag.PriceAnalysisService.Application.UseCases;
 using Simcag.Shared.Events;
 using Simcag.Shared.Messaging.Contracts;
+using Simcag.Shared.Messaging.Telemetry;
 
 namespace Simcag.PriceAnalysisService.Application.Workers;
 
@@ -34,40 +35,43 @@ public sealed class EnrichedFinancialDataConsumer : BackgroundService
 
         await foreach (var envelope in _consumer.ReadMessagesAsync(stoppingToken))
         {
-            var enriched = envelope.Data;
-            try
+            using (MessagingConsumeTelemetry.BeginConsume(envelope, out _))
             {
-                var mapped = EnrichedFinancialDataMapper.ToDataProcessedEvents(enriched).ToList();
-                if (mapped.Count == 0)
+                var enriched = envelope.Data;
+                try
                 {
+                    var mapped = EnrichedFinancialDataMapper.ToDataProcessedEvents(enriched).ToList();
+                    if (mapped.Count == 0)
+                    {
+                        _logger.LogInformation(
+                            "EnrichedFinancialDataEvent {EventId} sem linhas com valor > 0 (documento {DocumentId}); ack.",
+                            enriched.EventId,
+                            enriched.DocumentId);
+                        await _consumer.AcknowledgeMessageAsync(envelope, stoppingToken);
+                        continue;
+                    }
+
+                    using var scope = _scopeFactory.CreateScope();
+                    var useCase = scope.ServiceProvider.GetRequiredService<ProcessPriceDataUseCase>();
+
+                    foreach (var row in mapped)
+                        await useCase.HandleAsync(row, stoppingToken);
+
+                    await _consumer.AcknowledgeMessageAsync(envelope, stoppingToken);
                     _logger.LogInformation(
-                        "EnrichedFinancialDataEvent {EventId} sem linhas com valor > 0 (documento {DocumentId}); ack.",
+                        "EnrichedFinancialDataEvent {EventId}: analisadas {Count} linha(s) (documento {DocumentId}).",
+                        enriched.EventId,
+                        mapped.Count,
+                        enriched.DocumentId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Falha ao processar EnrichedFinancialDataEvent {EventId} documento {DocumentId}",
                         enriched.EventId,
                         enriched.DocumentId);
-                    await _consumer.AcknowledgeMessageAsync(envelope, stoppingToken);
-                    continue;
+                    await _consumer.RejectMessageAsync(envelope, stoppingToken);
                 }
-
-                using var scope = _scopeFactory.CreateScope();
-                var useCase = scope.ServiceProvider.GetRequiredService<ProcessPriceDataUseCase>();
-
-                foreach (var row in mapped)
-                    await useCase.HandleAsync(row, stoppingToken);
-
-                await _consumer.AcknowledgeMessageAsync(envelope, stoppingToken);
-                _logger.LogInformation(
-                    "EnrichedFinancialDataEvent {EventId}: analisadas {Count} linha(s) (documento {DocumentId}).",
-                    enriched.EventId,
-                    mapped.Count,
-                    enriched.DocumentId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "Falha ao processar EnrichedFinancialDataEvent {EventId} documento {DocumentId}",
-                    enriched.EventId,
-                    enriched.DocumentId);
-                await _consumer.RejectMessageAsync(envelope, stoppingToken);
             }
         }
     }

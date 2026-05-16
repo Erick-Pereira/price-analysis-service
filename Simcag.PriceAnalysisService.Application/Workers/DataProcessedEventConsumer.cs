@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Simcag.Shared.Events;
 using Simcag.Shared.Messaging.Contracts;
+using Simcag.Shared.Messaging.Telemetry;
 using Simcag.PriceAnalysisService.Application.Mapping;
 using Simcag.PriceAnalysisService.Application.UseCases;
 using Simcag.PriceAnalysisService.Domain.Events;
@@ -31,39 +32,42 @@ public class DataProcessedEventConsumer : BackgroundService
 
         await foreach (var messageEnvelope in _eventConsumer.ReadMessagesAsync(stoppingToken))
         {
-            using var scope = _scopeFactory.CreateScope();
-            var useCase = scope.ServiceProvider.GetRequiredService<ProcessPriceDataUseCase>();
-
-            try
+            using (MessagingConsumeTelemetry.BeginConsume(messageEnvelope, out _))
             {
-                var incoming = messageEnvelope.Data;
-                var audit = ProcessedEventDataMapper.MapAudit(incoming);
-                var mapped = new DataProcessedEvent(
-                    incoming.EventId,
-                    incoming.ProductId,
-                    incoming.Price,
-                    incoming.Timestamp,
-                    incoming.Source,
-                    incoming.Market)
+                using var scope = _scopeFactory.CreateScope();
+                var useCase = scope.ServiceProvider.GetRequiredService<ProcessPriceDataUseCase>();
+
+                try
                 {
-                    ProductName = incoming.ProductName,
-                    ExpenseId = audit.ExpenseId,
-                    TenantId = audit.TenantId ?? string.Empty,
-                    Category = audit.Category ?? string.Empty,
-                    Region = audit.Region ?? string.Empty,
-                    SupplierId = audit.SupplierId ?? string.Empty
-                };
+                    var incoming = messageEnvelope.Data;
+                    var audit = ProcessedEventDataMapper.MapAudit(incoming);
+                    var mapped = new DataProcessedEvent(
+                        incoming.EventId,
+                        incoming.ProductId,
+                        incoming.Price,
+                        incoming.Timestamp,
+                        incoming.Source,
+                        incoming.Market)
+                    {
+                        ProductName = incoming.ProductName,
+                        ExpenseId = audit.ExpenseId,
+                        TenantId = audit.TenantId ?? string.Empty,
+                        Category = audit.Category ?? string.Empty,
+                        Region = audit.Region ?? string.Empty,
+                        SupplierId = audit.SupplierId ?? string.Empty
+                    };
 
-                await useCase.HandleAsync(mapped, stoppingToken);
-                await _eventConsumer.AcknowledgeMessageAsync(messageEnvelope, stoppingToken);
-                _logger.LogInformation("Processed price-data event {EventId} for product {ProductId}",
-                    mapped.EventId, mapped.ProductId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process price-data event {EventId} for {ProductId}",
-                    messageEnvelope.Data.EventId, messageEnvelope.Data.ProductId);
-                await _eventConsumer.RejectMessageAsync(messageEnvelope, stoppingToken);
+                    await useCase.HandleAsync(mapped, stoppingToken);
+                    await _eventConsumer.AcknowledgeMessageAsync(messageEnvelope, stoppingToken);
+                    _logger.LogInformation("Processed price-data event {EventId} for product {ProductId}",
+                        mapped.EventId, mapped.ProductId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to process price-data event {EventId} for {ProductId}",
+                        messageEnvelope.Data.EventId, messageEnvelope.Data.ProductId);
+                    await _eventConsumer.RejectMessageAsync(messageEnvelope, stoppingToken);
+                }
             }
         }
 

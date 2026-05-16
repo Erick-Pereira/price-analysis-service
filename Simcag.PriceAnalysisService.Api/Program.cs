@@ -13,6 +13,7 @@ using Simcag.Shared.Messaging;
 using Simcag.Shared.Messaging.Configuration;
 using Simcag.Shared.Messaging.Extensions;
 using Simcag.Shared.Hosting;
+using Simcag.Shared.Telemetry;
 using Polly;
 using Polly.Extensions.Http;
 using StackExchange.Redis;
@@ -41,6 +42,7 @@ if (!string.IsNullOrEmpty(builder.Environment.ContentRootPath))
     LoadEnvFromCommonPaths(builder.Environment.ContentRootPath);
 ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 ContainerListenConfiguration.ApplyDockerListenUrls(builder);
+builder.AddSimcagDistributedTelemetry("Simcag.PriceAnalysisService");
 static string? GetEnv(params string[] keys)
 {
     foreach (var k in keys)
@@ -137,6 +139,7 @@ var rabbitMqOptions = new RabbitMqOptions
     Password = GetEnv("RABBITMQ__PASSWORD", "RABBITMQ_PASSWORD") ?? "guest",
     VirtualHost = GetEnv("RABBITMQ__VIRTUALHOST", "RABBITMQ_VIRTUALHOST") ?? "/"
 };
+rabbitMqOptions.ApplyMessageSigningFromEnvironment();
 
 builder.Services.AddRabbitMqMessaging(rabbitMqOptions);
 
@@ -154,6 +157,8 @@ builder.Services.AddHostedService<EnrichedFinancialDataConsumer>();
 ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 var app = builder.Build();
+
+app.UseSimcagHttpCorrelationActivityTags();
 
 // Cria/atualiza tabelas (PriceAnalyses, etc.). Sem isto, PG devolve 42P01 ao gravar análise.
 using (var scope = app.Services.CreateScope())
@@ -179,6 +184,8 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHealthChecks("/health");
+
+app.UseSimcagTelemetryEndpoints();
 
 app.Run();
 

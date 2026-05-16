@@ -4,7 +4,7 @@
 # Simcag.Shared vem do GitHub Packages (TOKEN + NUGET_GITHUB_OWNER no build).
 # ============================================================================
 
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS builder
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS builder
 
 WORKDIR /src
 
@@ -38,7 +38,7 @@ RUN dotnet publish "Simcag.PriceAnalysisService.Api/Simcag.PriceAnalysisService.
     --no-restore \
     /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS runtime
 
 WORKDIR /app
 

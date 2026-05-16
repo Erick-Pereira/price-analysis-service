@@ -1,5 +1,6 @@
 using Simcag.PriceAnalysisService.Domain.Events;
 using Simcag.Shared.Events;
+using Simcag.Shared.Finance;
 
 namespace Simcag.PriceAnalysisService.Application.Mapping;
 
@@ -28,9 +29,14 @@ public static class EnrichedFinancialDataMapper
 
             idx++;
             var productId = $"{enriched.DocumentId}:{idx}";
-            var productName = string.IsNullOrWhiteSpace(item.Description)
+            var semantics = FinancialLineItemSemanticNormalizer.Repair(
+                item.Description,
+                item.Amount,
+                item.Quantity,
+                item.UnitPrice);
+            var productName = string.IsNullOrWhiteSpace(semantics.CleanDescription)
                 ? $"Linha {idx} documento {enriched.DocumentId}"
-                : item.Description.Trim();
+                : FinancialLineItemSemanticNormalizer.ToSearchQueryLabel(semantics.CleanDescription);
 
             var lineCategory = DeriveLineCategory(productName, documentLevelCategory);
 

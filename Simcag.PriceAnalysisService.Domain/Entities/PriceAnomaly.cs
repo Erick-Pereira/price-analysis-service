@@ -19,7 +19,7 @@ public class PriceAnomaly
     public decimal AveragePrice { get; set; }
 
     [Required]
-    public PriceRange AllowedRange { get; set; } = new(0, 0);
+    public PriceRange AllowedRange { get; set; } = null!;
 
     [Required]
     public PriceAnomalyType AnomalyType { get; set; }
