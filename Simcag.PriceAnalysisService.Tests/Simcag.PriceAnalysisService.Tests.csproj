@@ -8,6 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="6.12.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.5" />
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
@@ -17,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Simcag.PriceAnalysisService.Api\Simcag.PriceAnalysisService.Api.csproj" />
     <ProjectReference Include="..\Simcag.PriceAnalysisService.Domain\Simcag.PriceAnalysisService.Domain.csproj" />
     <ProjectReference Include="..\Simcag.PriceAnalysisService.Application\Simcag.PriceAnalysisService.Application.csproj" />
   </ItemGroup>

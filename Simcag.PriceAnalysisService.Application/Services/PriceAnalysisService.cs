@@ -262,6 +262,14 @@ public class PriceAnalysisService : IPriceAnalysisService
                 var result = await response.Content.ReadFromJsonAsync<MarketDataResponse>(ct);
                 if (result?.Success == true && result.Data is not null)
                 {
+                    if (IsDocumentAnchorOnly(result.Data))
+                    {
+                        _logger.LogInformation(
+                            "Market data retornou apenas âncora documental para {ProductName}; benchmark externo indisponível (web scrape sem amostras).",
+                            productName);
+                        return null;
+                    }
+
                     _logger.LogInformation("Retrieved market price {Price} for {ProductName}", result.Data.Price, productName);
                     return result.Data.Price;
                 }
@@ -343,6 +351,11 @@ public class PriceAnalysisService : IPriceAnalysisService
             Message = analysis.AnalysisNotes
         };
     }
+
+    private static bool IsDocumentAnchorOnly(MarketData data) =>
+        string.Equals(data.BenchmarkKind, "DocumentAnchorPrice", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(data.Source, "DocumentDeclaredReference", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(data.BenchmarkStatus, "document_anchor", StringComparison.OrdinalIgnoreCase);
 }
 
 public class MarketDataResponse
@@ -359,4 +372,6 @@ public class MarketData
     public decimal Price { get; set; }
     public string Source { get; set; } = string.Empty;
     public DateTime CollectedDate { get; set; }
+    public string? BenchmarkKind { get; set; }
+    public string? BenchmarkStatus { get; set; }
 }

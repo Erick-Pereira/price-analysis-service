@@ -12,7 +12,9 @@ using Simcag.Shared.Events;
 using Simcag.Shared.Messaging;
 using Simcag.Shared.Messaging.Configuration;
 using Simcag.Shared.Messaging.Extensions;
+using Simcag.Shared.ErrorHandling;
 using Simcag.Shared.Hosting;
+using Simcag.Shared.Security;
 using Simcag.Shared.Telemetry;
 using Polly;
 using Polly.Extensions.Http;
@@ -43,6 +45,7 @@ if (!string.IsNullOrEmpty(builder.Environment.ContentRootPath))
 ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 builder.AddSimcagDistributedTelemetry("Simcag.PriceAnalysisService");
+var isTesting = builder.Environment.IsEnvironment("Testing");
 static string? GetEnv(params string[] keys)
 {
     foreach (var k in keys)
@@ -95,7 +98,12 @@ builder.Services.AddSwaggerGen(c =>
 var connectionString = GetNpgsqlConnectionString(builder.Configuration);
 
 builder.Services.AddDbContext<PriceAnalysisDbContext>(options =>
-    options.UseNpgsql(connectionString));
+{
+    if (isTesting)
+        options.UseInMemoryDatabase("price-analysis-testing");
+    else
+        options.UseNpgsql(connectionString);
+});
 
 // Repositories
 builder.Services.AddScoped<IPriceRepository, Simcag.PriceAnalysisService.Infrastructure.Persistence.PriceRepository>();
@@ -107,12 +115,14 @@ builder.Services.AddScoped<DetectPriceVariationUseCase>();
 builder.Services.AddScoped<ProcessPriceDataUseCase>();
 
 // HTTP Client with Polly for Market Data Service
+builder.Services.AddSimcagGatewayTrust();
 builder.Services.AddHttpClient("MarketDataClient", client =>
 {
     client.BaseAddress = new Uri(
-        GetEnv("MARKET_DATA_API_URL", "MARKETDATA_SERVICE_URL", "MarketData__BaseUrl") ?? "http://localhost:8082");
-    client.Timeout = TimeSpan.FromSeconds(10);
+        GetEnv("MARKET_DATA_API_URL", "MARKETDATA_SERVICE_URL", "MarketData__BaseUrl") ?? "http://localhost:5007");
+    client.Timeout = TimeSpan.FromSeconds(30);
 })
+.AddSimcagGatewayOutboundAuth()
 .AddPolicyHandler(GetRetryPolicy())
 .AddPolicyHandler(GetCircuitBreakerPolicy());
 
@@ -127,9 +137,12 @@ else
 }
 
 // Health Checks
-builder.Services.AddHealthChecks()
-    .AddNpgSql(connectionString, name: "PostgreSQL");
+var healthChecks = builder.Services.AddHealthChecks().AddSimcagLiveSelfCheck();
+if (!isTesting)
+    healthChecks.AddNpgSql(connectionString, name: "PostgreSQL", tags: [SimcagHealthCheckExtensions.ReadyTag]);
 
+if (!isTesting)
+{
 // RabbitMQ
 var rabbitMqOptions = new RabbitMqOptions
 {
@@ -153,14 +166,24 @@ builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalysisCom
 // Background Services
 builder.Services.AddHostedService<DataProcessedEventConsumer>();
 builder.Services.AddHostedService<EnrichedFinancialDataConsumer>();
+}
+
+builder.Services.AddSimcagGatewayAuthentication(builder.Environment);
+
+builder.Services.AddSimcagProblemDetails();
 
 ContainerListenConfiguration.NormalizeAspNetCoreListenUrlsInContainer();
 ContainerListenConfiguration.ApplyDockerListenUrls(builder);
 var app = builder.Build();
 
+app.ValidateSimcagGatewayTrustAtStartup();
+
+app.UseSimcagExceptionHandler();
 app.UseSimcagHttpCorrelationActivityTags();
 
 // Cria/atualiza tabelas (PriceAnalyses, etc.). Sem isto, PG devolve 42P01 ao gravar análise.
+if (!isTesting)
+{
 using (var scope = app.Services.CreateScope())
 {
     try
@@ -173,6 +196,7 @@ using (var scope = app.Services.CreateScope())
         app.Logger.LogError(ex, "Falha ao aplicar migrations do PriceAnalysisDbContext.");
     }
 }
+}
 
 if (app.Environment.IsDevelopment())
 {
@@ -180,10 +204,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/health");
+app.MapSimcagHealthChecks();
 
 app.UseSimcagTelemetryEndpoints();
 
@@ -202,4 +227,8 @@ static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
     return HttpPolicyExtensions
         .HandleTransientHttpError()
         .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
+}
+
+public partial class Program
+{
 }
