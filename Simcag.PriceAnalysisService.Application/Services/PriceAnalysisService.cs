@@ -1,8 +1,6 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -20,20 +18,20 @@ public class PriceAnalysisService : IPriceAnalysisService
     private readonly IPriceAnalysisRepository _analysisRepository;
     private readonly IPriceRepository _priceRepository;
     private readonly ILogger<PriceAnalysisService> _logger;
-    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IMarketDataPriceClient _marketDataPriceClient;
     private readonly IMarketDataCacheService _marketDataCache;
 
     public PriceAnalysisService(
         IPriceAnalysisRepository analysisRepository,
         IPriceRepository priceRepository,
         ILogger<PriceAnalysisService> logger,
-        IHttpClientFactory httpClientFactory,
+        IMarketDataPriceClient marketDataPriceClient,
         IMarketDataCacheService marketDataCache)
     {
         _analysisRepository = analysisRepository;
         _priceRepository = priceRepository;
         _logger = logger;
-        _httpClientFactory = httpClientFactory;
+        _marketDataPriceClient = marketDataPriceClient;
         _marketDataCache = marketDataCache;
     }
 
@@ -251,37 +249,23 @@ public class PriceAnalysisService : IPriceAnalysisService
 
     private async Task<decimal?> GetMarketPriceFromServiceAsync(string productName, decimal lineDeclaredPrice, CancellationToken ct)
     {
-        try
+        var lookup = await _marketDataPriceClient.LookupPriceAsync(productName, lineDeclaredPrice, ct);
+        if (lookup is null)
         {
-            var client = _httpClientFactory.CreateClient("MarketDataClient");
-            var qs =
-                $"productName={Uri.EscapeDataString(productName)}&declaredReferenceBrl={Uri.EscapeDataString(lineDeclaredPrice.ToString(CultureInfo.InvariantCulture))}";
-            var response = await client.GetAsync($"/api/market-data/price?{qs}", ct);
-            if (response.IsSuccessStatusCode)
-            {
-                var result = await response.Content.ReadFromJsonAsync<MarketDataResponse>(ct);
-                if (result?.Success == true && result.Data is not null)
-                {
-                    if (IsDocumentAnchorOnly(result.Data))
-                    {
-                        _logger.LogInformation(
-                            "Market data retornou apenas âncora documental para {ProductName}; benchmark externo indisponível (web scrape sem amostras).",
-                            productName);
-                        return null;
-                    }
+            _logger.LogWarning("Market data RPC returned no price for {ProductName}", productName);
+            return null;
+        }
 
-                    _logger.LogInformation("Retrieved market price {Price} for {ProductName}", result.Data.Price, productName);
-                    return result.Data.Price;
-                }
-            }
-            _logger.LogWarning("Market data HTTP {Status} for {ProductName}", response.StatusCode, productName);
-            return null;
-        }
-        catch (Exception ex)
+        if (IsDocumentAnchorOnly(lookup))
         {
-            _logger.LogError(ex, "Error calling Market Data Service for {ProductName}", productName);
+            _logger.LogInformation(
+                "Market data retornou apenas âncora documental para {ProductName}; benchmark externo indisponível (web scrape sem amostras).",
+                productName);
             return null;
         }
+
+        _logger.LogInformation("Retrieved market price {Price} for {ProductName}", lookup.Price, productName);
+        return lookup.Price;
     }
 
     private static decimal ComputePriceStdDev(IReadOnlyList<decimal> prices)
@@ -352,26 +336,8 @@ public class PriceAnalysisService : IPriceAnalysisService
         };
     }
 
-    private static bool IsDocumentAnchorOnly(MarketData data) =>
+    private static bool IsDocumentAnchorOnly(MarketPriceLookupResult data) =>
         string.Equals(data.BenchmarkKind, "DocumentAnchorPrice", StringComparison.OrdinalIgnoreCase)
         || string.Equals(data.Source, "DocumentDeclaredReference", StringComparison.OrdinalIgnoreCase)
         || string.Equals(data.BenchmarkStatus, "document_anchor", StringComparison.OrdinalIgnoreCase);
-}
-
-public class MarketDataResponse
-{
-    public bool Success { get; set; }
-    public MarketData? Data { get; set; }
-    public string? Message { get; set; }
-    public string[]? Errors { get; set; }
-}
-
-public class MarketData
-{
-    public string ProductName { get; set; } = string.Empty;
-    public decimal Price { get; set; }
-    public string Source { get; set; } = string.Empty;
-    public DateTime CollectedDate { get; set; }
-    public string? BenchmarkKind { get; set; }
-    public string? BenchmarkStatus { get; set; }
 }

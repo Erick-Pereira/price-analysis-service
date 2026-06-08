@@ -18,22 +18,19 @@ public sealed class ProcessPriceDataUseCase
     private readonly DetectPriceVariationUseCase _variationUseCase;
     private readonly IEventPublisher<global::Simcag.Shared.Events.PriceAnalyzedEvent> _priceAnalyzedPublisher;
     private readonly IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> _priceUpdatedPublisher;
-    private readonly IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> _priceAnalysisCompletedPublisher;
 
     public ProcessPriceDataUseCase(
         IPriceRepository priceRepository,
         IPriceAnalysisService priceAnalysisService,
         DetectPriceVariationUseCase variationUseCase,
         IEventPublisher<global::Simcag.Shared.Events.PriceAnalyzedEvent> priceAnalyzedPublisher,
-        IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> priceUpdatedPublisher,
-        IEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent> priceAnalysisCompletedPublisher)
+        IEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent> priceUpdatedPublisher)
     {
         _priceRepository = priceRepository;
         _priceAnalysisService = priceAnalysisService;
         _variationUseCase = variationUseCase;
         _priceAnalyzedPublisher = priceAnalyzedPublisher;
         _priceUpdatedPublisher = priceUpdatedPublisher;
-        _priceAnalysisCompletedPublisher = priceAnalysisCompletedPublisher;
     }
 
     public async Task HandleAsync(DataProcessedEvent input, CancellationToken cancellationToken)
@@ -83,7 +80,6 @@ public sealed class ProcessPriceDataUseCase
         var category = !string.IsNullOrWhiteSpace(input.Category)
             ? input.Category
             : (string.IsNullOrWhiteSpace(input.Market) ? input.Source : input.Market);
-        var confidence = analysisResult.MarketAverage > 0m ? 0.8 : 0.2;
 
         await _priceAnalyzedPublisher.PublishAsync(new global::Simcag.Shared.Events.PriceAnalyzedEvent
         {
@@ -108,33 +104,15 @@ public sealed class ProcessPriceDataUseCase
             SafeZoneMax = analysisResult.SafeZone.Max,
             Trend = trend,
             AnalysisDate = analysisResult.AnalysisDate,
-            HasAnomalies = analysisResult.HasAnomalies
+            HasAnomalies = analysisResult.HasAnomalies,
+            NotifyUserId = input.NotifyUserId is { } uid && uid != Guid.Empty ? uid : null,
+            PriceHistory = points
         }, cancellationToken);
 
         await _priceUpdatedPublisher.PublishAsync(new Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent
         {
             ProductId = analysisResult.ProductId,
             UpdatedAt = DateTime.UtcNow
-        }, cancellationToken);
-
-        await _priceAnalysisCompletedPublisher.PublishAsync(new Simcag.Shared.Events.PriceAnalysisCompletedEvent
-        {
-            ProductId = input.ProductId,
-            ProductName = productName,
-            Category = category,
-            SupplierId = string.IsNullOrWhiteSpace(input.SupplierId) ? null : input.SupplierId,
-            SupplierCategoryShare = 0m,
-            ProductCost = input.Price,
-            LastPrice = input.Price,
-            MarketPrice = analysisResult.MarketAverage,
-            AveragePrice = analysisResult.HistoricalAverage,
-            PriceHistory = points,
-            PriceVariation = analysisResult.DeviationPercentage ?? 0m,
-            Trend = trend,
-            StandardDeviation = analysisResult.StandardDeviation,
-            DataPointsCount = points.Count,
-            AnalyzedAt = DateTime.UtcNow,
-            ConfidenceScore = confidence
         }, cancellationToken);
     }
 }

@@ -32,7 +32,7 @@ public class PriceAnalysisDbContext : Microsoft.EntityFrameworkCore.DbContext
                 .HasColumnType("decimal(18,2)");
 
             entity.Property(e => e.DeviationPercentage)
-                .HasColumnType("decimal(5,2)");
+                .HasColumnType("decimal(10,2)");
 
             entity.Property(e => e.HistoricalAverage)
                 .HasColumnType("decimal(18,2)");

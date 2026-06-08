@@ -36,7 +36,7 @@ namespace Simcag.PriceAnalysisService.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(1000)");
 
                     b.Property<decimal?>("DeviationPercentage")
-                        .HasColumnType("decimal(5,2)");
+                        .HasColumnType("decimal(10,2)");
 
                     b.Property<decimal?>("HistoricalAverage")
                         .HasColumnType("decimal(18,2)");

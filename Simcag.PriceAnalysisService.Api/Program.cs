@@ -5,6 +5,7 @@ using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
 using Simcag.PriceAnalysisService.Application.UseCases;
 using Simcag.PriceAnalysisService.Application.Workers;
+using Simcag.PriceAnalysisService.Infrastructure.MarketData;
 using Simcag.PriceAnalysisService.Infrastructure.Persistence.DbContext;
 using Simcag.PriceAnalysisService.Infrastructure.Repositories;
 using Simcag.PriceAnalysisService.Infrastructure.Redis;
@@ -16,8 +17,6 @@ using Simcag.Shared.ErrorHandling;
 using Simcag.Shared.Hosting;
 using Simcag.Shared.Security;
 using Simcag.Shared.Telemetry;
-using Polly;
-using Polly.Extensions.Http;
 using StackExchange.Redis;
 
 // Load .env so DB__* and others are in Environment; try content root first when known (e.g. IDE), then cwd / app base.
@@ -114,17 +113,10 @@ builder.Services.AddScoped<IPriceAnalysisService, PriceAnalysisService>();
 builder.Services.AddScoped<DetectPriceVariationUseCase>();
 builder.Services.AddScoped<ProcessPriceDataUseCase>();
 
-// HTTP Client with Polly for Market Data Service
-builder.Services.AddSimcagGatewayTrust();
-builder.Services.AddHttpClient("MarketDataClient", client =>
+if (isTesting)
 {
-    client.BaseAddress = new Uri(
-        GetEnv("MARKET_DATA_API_URL", "MARKETDATA_SERVICE_URL", "MarketData__BaseUrl") ?? "http://localhost:5007");
-    client.Timeout = TimeSpan.FromSeconds(30);
-})
-.AddSimcagGatewayOutboundAuth()
-.AddPolicyHandler(GetRetryPolicy())
-.AddPolicyHandler(GetCircuitBreakerPolicy());
+    builder.Services.AddSingleton<IMarketDataPriceClient, NullMarketDataPriceClient>();
+}
 
 // Redis: optional market reference cache
 var redisConnection = GetEnv("REDIS__CONNECTION", "REDIS_CONNECTION", "ConnectionStrings__Redis", "REDIS__CONNECTION_STRING");
@@ -155,13 +147,14 @@ var rabbitMqOptions = new RabbitMqOptions
 rabbitMqOptions.ApplyMessageSigningFromEnvironment();
 
 builder.Services.AddRabbitMqMessaging(rabbitMqOptions);
+builder.Services.AddRabbitMqRpcClient();
+builder.Services.AddSingleton<IMarketDataPriceClient, MarketDataPriceRpcClient>();
 
 var eventsExchange = EventBusConstants.GetEventsExchangeName();
 builder.Services.AddRabbitMqEventConsumer<PriceDataProcessedEvent>(nameof(PriceDataProcessedEvent), eventsExchange);
 builder.Services.AddRabbitMqEventConsumer<EnrichedFinancialDataEvent>(EventNames.EnrichedFinancialData, eventsExchange);
 builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalyzedEvent>(eventsExchange);
 builder.Services.AddRabbitMqEventPublisher<Simcag.PriceAnalysisService.Domain.Events.PriceUpdatedEvent>(eventsExchange);
-builder.Services.AddRabbitMqEventPublisher<Simcag.Shared.Events.PriceAnalysisCompletedEvent>(eventsExchange);
 
 // Background Services
 builder.Services.AddHostedService<DataProcessedEventConsumer>();
@@ -213,21 +206,6 @@ app.MapSimcagHealthChecks();
 app.UseSimcagTelemetryEndpoints();
 
 app.Run();
-
-// Polly policies for HTTP resilience
-static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy()
-{
-    return HttpPolicyExtensions
-        .HandleTransientHttpError()
-        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
-}
-
-static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy()
-{
-    return HttpPolicyExtensions
-        .HandleTransientHttpError()
-        .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
-}
 
 public partial class Program
 {

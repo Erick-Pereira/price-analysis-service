@@ -36,7 +36,7 @@ public class PriceAnalysis : BaseEntity
             OriginalPrice = originalPrice,
             MarketPrice = marketPrice,
             HistoricalAverage = historicalAverage,
-            DeviationPercentage = deviationPercentage,
+            DeviationPercentage = PriceDeviationPolicy.CapForStorage(deviationPercentage),
             Severity = severity,
             AnalysisDate = DateTime.UtcNow,
             IsAnomalous = anom,
@@ -54,7 +54,7 @@ public class PriceAnalysis : BaseEntity
     {
         MarketPrice = marketPrice;
         HistoricalAverage = historicalAverage;
-        DeviationPercentage = deviationPercentage;
+        DeviationPercentage = PriceDeviationPolicy.CapForStorage(deviationPercentage);
         Severity = severity;
         IsAnomalous = isAnomalous ?? PriceDeviationPolicy.IsAnomalous(severity);
         AnalysisNotes = notes;

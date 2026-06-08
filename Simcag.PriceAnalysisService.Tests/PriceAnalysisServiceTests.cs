@@ -1,9 +1,5 @@
-using System.Collections.Generic;
-using System.Net;
-using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using Moq;
-using Moq.Protected;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Application.Services;
 using Simcag.PriceAnalysisService.Domain.Entities;
@@ -18,10 +14,8 @@ public class PriceAnalysisServiceTests
     private readonly Mock<IPriceAnalysisRepository> _analysisRepositoryMock;
     private readonly Mock<IPriceRepository> _priceRepositoryMock;
     private readonly Mock<ILogger<Service.PriceAnalysisService>> _loggerMock;
-    private readonly Mock<IHttpClientFactory> _httpFactory;
+    private readonly Mock<IMarketDataPriceClient> _marketDataClientMock;
     private readonly Mock<IMarketDataCacheService> _cacheMock;
-    private readonly Mock<HttpMessageHandler> _httpMessageHandlerMock;
-    private readonly HttpClient _httpClient;
     private readonly Service.PriceAnalysisService _service;
 
     public PriceAnalysisServiceTests()
@@ -36,17 +30,12 @@ public class PriceAnalysisServiceTests
             .Setup(c => c.GetPriceAsync(It.IsAny<string>()))
             .ReturnsAsync((decimal?)null);
         _loggerMock = new Mock<ILogger<Service.PriceAnalysisService>>();
-        _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
-        _httpClient = new HttpClient(_httpMessageHandlerMock.Object) { BaseAddress = new Uri("http://localhost:8082") };
-        _httpFactory = new Mock<IHttpClientFactory>();
-        _httpFactory
-            .Setup(f => f.CreateClient(It.IsAny<string>()))
-            .Returns(_httpClient);
+        _marketDataClientMock = new Mock<IMarketDataPriceClient>();
         _service = new Service.PriceAnalysisService(
             _analysisRepositoryMock.Object,
             _priceRepositoryMock.Object,
             _loggerMock.Object,
-            _httpFactory.Object,
+            _marketDataClientMock.Object,
             _cacheMock.Object);
     }
 
@@ -63,18 +52,7 @@ public class PriceAnalysisServiceTests
             Source = "test-source",
             Market = "test-market"
         };
-        var marketResponse = new
-        {
-            Success = true,
-            Data = new
-            {
-                ProductName = "Test Product",
-                Price = 90m,
-                Source = "MarketData",
-                CollectedDate = DateTime.UtcNow
-            }
-        };
-        SetupHttpMock("Test Product", marketResponse);
+        SetupMarketDataMock("Test Product", 90m);
 
         var result = await _service.AnalyzePriceAsync(dataProcessedEvent, null, CancellationToken.None);
 
@@ -101,8 +79,7 @@ public class PriceAnalysisServiceTests
             Source = "test-source",
             Market = "test-market"
         };
-        SetupHttpMock("Unknown Product",
-            new { Success = false, Message = "Not found" }, HttpStatusCode.NotFound);
+        SetupMarketDataMock("Unknown Product", null);
 
         var result = await _service.AnalyzePriceAsync(dataProcessedEvent, null, CancellationToken.None);
 
@@ -130,18 +107,7 @@ public class PriceAnalysisServiceTests
             Source = "test-source",
             Market = "test-market"
         };
-        var marketResponse = new
-        {
-            Success = true,
-            Data = new
-            {
-                ProductName = "Normal Product",
-                Price = 100m,
-                Source = "MarketData",
-                CollectedDate = DateTime.UtcNow
-            }
-        };
-        SetupHttpMock("Normal Product", marketResponse);
+        SetupMarketDataMock("Normal Product", 100m);
 
         await _service.AnalyzePriceAsync(dataProcessedEvent, null, CancellationToken.None);
 
@@ -162,17 +128,7 @@ public class PriceAnalysisServiceTests
             Source = "s",
             Market = "m"
         };
-        SetupHttpMock("Expensive", new
-        {
-            Success = true,
-            Data = new
-            {
-                ProductName = "Expensive",
-                Price = 100m,
-                Source = "M",
-                CollectedDate = DateTime.UtcNow
-            }
-        });
+        SetupMarketDataMock("Expensive", 100m);
 
         await _service.AnalyzePriceAsync(data, null, CancellationToken.None);
 
@@ -196,17 +152,7 @@ public class PriceAnalysisServiceTests
             Source = "s",
             Market = "m"
         };
-        SetupHttpMock("Crisis", new
-        {
-            Success = true,
-            Data = new
-            {
-                ProductName = "Crisis",
-                Price = 100m,
-                Source = "M",
-                CollectedDate = DateTime.UtcNow
-            }
-        });
+        SetupMarketDataMock("Crisis", 100m);
 
         await _service.AnalyzePriceAsync(data, null, CancellationToken.None);
 
@@ -217,20 +163,19 @@ public class PriceAnalysisServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    private void SetupHttpMock(string productNameOrFragment, object responseContent, HttpStatusCode statusCode = HttpStatusCode.OK)
+    private void SetupMarketDataMock(string productName, decimal? price)
     {
-        var enc = Uri.EscapeDataString(productNameOrFragment);
-        var response = new HttpResponseMessage(statusCode) { Content = JsonContent.Create(responseContent) };
-        _httpMessageHandlerMock
-            .Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.RequestUri != null
-                    && req.RequestUri.ToString().Contains("market-data", StringComparison.OrdinalIgnoreCase)
-                    && (req.RequestUri.ToString().Contains(enc, StringComparison.Ordinal)
-                        || req.RequestUri.ToString().Contains(productNameOrFragment, StringComparison.Ordinal))),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(response);
+        _marketDataClientMock
+            .Setup(c => c.LookupPriceAsync(
+                It.Is<string>(n => n.Contains(productName, StringComparison.OrdinalIgnoreCase)),
+                It.IsAny<decimal>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(price.HasValue
+                ? new MarketPriceLookupResult
+                {
+                    Price = price.Value,
+                    Source = "MarketData",
+                }
+                : null);
     }
 }

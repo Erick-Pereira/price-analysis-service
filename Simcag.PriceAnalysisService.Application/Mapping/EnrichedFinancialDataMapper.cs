@@ -39,16 +39,20 @@ public static class EnrichedFinancialDataMapper
                 : FinancialLineItemSemanticNormalizer.ToSearchQueryLabel(semantics.CleanDescription);
 
             var lineCategory = DeriveLineCategory(productName, documentLevelCategory);
+            var comparableUnitPrice = ResolveComparableUnitPrice(item.Amount, semantics.Quantity, semantics.UnitPrice);
 
-            yield return new DataProcessedEvent(Guid.NewGuid(), productId, item.Amount, enriched.EnrichedAt, "ai-enrichment", lineCategory)
+            yield return new DataProcessedEvent(Guid.NewGuid(), productId, comparableUnitPrice, enriched.EnrichedAt, "ai-enrichment", lineCategory)
             {
                 ProductName = productName,
                 ExpenseId = expenseId,
                 TenantId = tenant,
+                NotifyUserId = enriched.NotifyUserId,
                 Category = lineCategory,
                 Region = string.Empty,
                 SupplierId = supplierKey,
-                RawDocumentId = enriched.DocumentId
+                RawDocumentId = enriched.DocumentId,
+                Quantity = semantics.Quantity ?? item.Quantity,
+                LineTotal = item.Amount
             };
         }
     }
@@ -67,6 +71,17 @@ public static class EnrichedFinancialDataMapper
             return "Outros";
 
         return string.IsNullOrWhiteSpace(documentFallback) ? "Outros" : documentFallback.Trim();
+    }
+
+    private static decimal ResolveComparableUnitPrice(decimal lineTotal, int? quantity, decimal? unitPrice)
+    {
+        if (unitPrice is > 0m)
+            return Math.Round(unitPrice.Value, 4, MidpointRounding.AwayFromZero);
+
+        if (quantity is > 1 && lineTotal > 0m)
+            return Math.Round(lineTotal / quantity.Value, 4, MidpointRounding.AwayFromZero);
+
+        return lineTotal;
     }
 
     private static string? TryExtractLeadingCategory(string productName)
