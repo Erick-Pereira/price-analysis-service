@@ -92,6 +92,8 @@ public sealed class ProcessPriceDataUseCase
             Region = input.Region,
             SupplierId = input.SupplierId,
             LastPrice = input.Price,
+            Quantity = input.Quantity,
+            LineTotal = input.LineTotal,
             MarketAverage = analysisResult.MarketAverage,
             HistoricalAverage = analysisResult.HistoricalAverage,
             DeviationPercentage = analysisResult.DeviationPercentage ?? 0m,
@@ -105,6 +107,39 @@ public sealed class ProcessPriceDataUseCase
             Trend = trend,
             AnalysisDate = analysisResult.AnalysisDate,
             HasAnomalies = analysisResult.HasAnomalies,
+            MarketSource = analysisResult.MarketSource,
+            MarketBenchmarkKind = analysisResult.MarketBenchmarkKind,
+            MarketBenchmarkStatus = analysisResult.MarketBenchmarkStatus,
+            MarketConfidence = analysisResult.MarketConfidence,
+            MarketSampleCount = analysisResult.MarketSampleCount,
+            MarketRelativeSpread = analysisResult.MarketRelativeSpread,
+            MarketSearchQuery = analysisResult.MarketSearchQuery,
+            MarketDocumentAnchorPrice = analysisResult.MarketDocumentAnchorPrice,
+            MarketEvidence = analysisResult.MarketEvidence?
+                .Select(e => new global::Simcag.Shared.Contracts.MarketPriceEvidence
+                {
+                    Scope = e.Scope,
+                    Phase = e.Phase,
+                    Message = e.Message,
+                    Detail = e.Detail,
+                })
+                .ToList() ?? new List<global::Simcag.Shared.Contracts.MarketPriceEvidence>(),
+            MarketReferenceLinks = analysisResult.MarketReferenceLinks?
+                .Select(l => new global::Simcag.Shared.Contracts.MarketPriceReferenceLink
+                {
+                    Label = l.Label,
+                    Url = l.Url,
+                })
+                .ToList() ?? new List<global::Simcag.Shared.Contracts.MarketPriceReferenceLink>(),
+            MarketSamples = analysisResult.MarketSamples?
+                .Select(s => new global::Simcag.Shared.Contracts.MarketPriceSample
+                {
+                    Label = s.Label,
+                    Url = s.Url,
+                    PriceBrl = s.PriceBrl,
+                    Provider = s.Provider,
+                })
+                .ToList() ?? new List<global::Simcag.Shared.Contracts.MarketPriceSample>(),
             NotifyUserId = input.NotifyUserId is { } uid && uid != Guid.Empty ? uid : null,
             PriceHistory = points
         }, cancellationToken);

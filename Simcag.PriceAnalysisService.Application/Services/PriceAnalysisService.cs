@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Simcag.PriceAnalysisService.Application.Benchmarking;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.PriceAnalysisService.Domain;
 using Simcag.PriceAnalysisService.Domain.Entities;
@@ -44,8 +45,8 @@ public class PriceAnalysisService : IPriceAnalysisService
         _logger.LogInformation("Starting price analysis for product {ProductId}", data.ProductId);
 
         var productName = string.IsNullOrWhiteSpace(data.ProductName) ? data.ProductId : data.ProductName;
-        var cacheKey = BuildMarketDataCacheKey(data.Region, data.ProductId, productName);
-        var marketPrice = await GetMarketPriceWithCacheAsync(cacheKey, productName, data.Price, ct);
+        var cacheKey = BuildMarketDataCacheKey(data.Region, data.ProductId, productName, data.Price);
+        var (marketPrice, marketLookup) = await GetMarketPriceWithCacheAsync(cacheKey, productName, data.Price, ct);
 
         var history = await _priceRepository.GetPriceHistoryAsync(data.ProductId, ct) ?? new List<PriceHistory>();
         var pricePoints = history
@@ -111,8 +112,63 @@ public class PriceAnalysisService : IPriceAnalysisService
             Severity = finalSeverity,
             SafeZone = safe,
             AnalysisDate = DateTime.UtcNow,
-            Anomalies = new List<PriceAnomaly>()
+            Anomalies = new List<PriceAnomaly>(),
+            MarketSource = marketLookup?.Source,
+            MarketBenchmarkKind = marketLookup?.BenchmarkKind,
+            MarketBenchmarkStatus = marketLookup?.BenchmarkStatus,
+            MarketConfidence = marketLookup?.Confidence,
+            MarketSampleCount = marketLookup?.SampleCount,
+            MarketRelativeSpread = marketLookup?.RelativeSpread,
+            MarketSearchQuery = marketLookup?.SearchQueryUsed,
+            MarketDocumentAnchorPrice = marketLookup is not null && IsDocumentAnchorOnly(marketLookup) && marketLookup.Price > 0
+                ? marketLookup.Price
+                : null,
+            MarketEvidence = MapEvidence(marketLookup),
+            MarketReferenceLinks = MapReferenceLinks(marketLookup),
+            MarketSamples = MapMarketSamples(marketLookup),
         };
+    }
+
+    private static IReadOnlyList<MarketPriceSampleLine>? MapMarketSamples(MarketPriceLookupResult? lookup)
+    {
+        if (lookup?.MarketSamples is not { Count: > 0 } items)
+            return null;
+
+        return items
+            .Select(s => new MarketPriceSampleLine
+            {
+                Label = s.Label,
+                Url = s.Url,
+                PriceBrl = s.PriceBrl,
+                Provider = s.Provider,
+            })
+            .ToList();
+    }
+
+    private static IReadOnlyList<MarketPriceReferenceLinkLine>? MapReferenceLinks(MarketPriceLookupResult? lookup)
+    {
+        if (lookup?.ReferenceLinks is not { Count: > 0 } items)
+            return null;
+
+        return items
+            .Select(l => new MarketPriceReferenceLinkLine { Label = l.Label, Url = l.Url })
+            .ToList();
+    }
+
+    private static IReadOnlyList<MarketPriceEvidenceLine>? MapEvidence(MarketPriceLookupResult? lookup)
+    {
+        if (lookup?.Evidence is not { Count: > 0 } items)
+            return null;
+
+        return items
+            .Select(e => new MarketPriceEvidenceLine
+            {
+                Scope = e.Scope,
+                Phase = e.Phase,
+                Message = e.Message,
+                Detail = e.Detail,
+            })
+            .ToList();
     }
 
     private static (DeviationSeverity sev, decimal? dev) ResolveDeviation(
@@ -215,10 +271,11 @@ public class PriceAnalysisService : IPriceAnalysisService
         return rows.Select(MapStoredAnalysisToApiResult).ToList();
     }
 
-    /// <summary>Inclui <paramref name="productId"/> para evitar colisão entre linhas com a mesma descrição em documentos diferentes.</summary>
-    private static string BuildMarketDataCacheKey(string region, string productId, string productName)
+    /// <summary>Inclui <paramref name="productId"/> e bucket do declarado para evitar colisão de cache.</summary>
+    private static string BuildMarketDataCacheKey(string region, string productId, string productName, decimal declaredPrice)
     {
-        var core = $"{productId.Trim()}|{productName.Trim()}";
+        var bucket = MarketDeclaredPlausibility.DeclaredPriceBucket(declaredPrice);
+        var core = $"{productId.Trim()}|{productName.Trim()}|{bucket}";
         return string.IsNullOrWhiteSpace(region) ? core : $"{region.Trim()}|{core}";
     }
 
@@ -232,7 +289,7 @@ public class PriceAnalysisService : IPriceAnalysisService
         return others.Average(h => h.Price);
     }
 
-    private async Task<decimal?> GetMarketPriceWithCacheAsync(
+    private async Task<(decimal? price, MarketPriceLookupResult? lookup)> GetMarketPriceWithCacheAsync(
         string cacheKey,
         string productName,
         decimal lineDeclaredPrice,
@@ -240,14 +297,42 @@ public class PriceAnalysisService : IPriceAnalysisService
     {
         var cached = await _marketDataCache.GetPriceAsync(cacheKey);
         if (cached.HasValue)
-            return cached.Value;
-        var http = await GetMarketPriceFromServiceAsync(productName, lineDeclaredPrice, ct);
-        if (http.HasValue)
-            await _marketDataCache.SetPriceAsync(cacheKey, http.Value);
-        return http;
+        {
+            if (lineDeclaredPrice <= 0.01m
+                || MarketDeclaredPlausibility.IsPlausible(cached.Value, lineDeclaredPrice))
+            {
+                return (cached.Value, new MarketPriceLookupResult
+                {
+                    Price = cached.Value,
+                    Source = "RedisCache:1h",
+                    BenchmarkKind = "ExternalMarketEstimate",
+                    BenchmarkStatus = "cached",
+                    Confidence = "medium",
+                });
+            }
+
+            _logger.LogInformation(
+                "Cache price-analysis ignorado para {ProductName}: {CachedPrice} incompatível com declarado {Declared}",
+                productName,
+                cached.Value,
+                lineDeclaredPrice);
+        }
+
+        var lookup = await GetMarketPriceFromServiceAsync(productName, lineDeclaredPrice, ct);
+        if (lookup is null)
+            return (null, null);
+
+        if (IsDocumentAnchorOnly(lookup))
+            return (null, lookup);
+
+        await _marketDataCache.SetPriceAsync(cacheKey, lookup.Price);
+        return (lookup.Price, lookup);
     }
 
-    private async Task<decimal?> GetMarketPriceFromServiceAsync(string productName, decimal lineDeclaredPrice, CancellationToken ct)
+    private async Task<MarketPriceLookupResult?> GetMarketPriceFromServiceAsync(
+        string productName,
+        decimal lineDeclaredPrice,
+        CancellationToken ct)
     {
         var lookup = await _marketDataPriceClient.LookupPriceAsync(productName, lineDeclaredPrice, ct);
         if (lookup is null)
@@ -261,11 +346,15 @@ public class PriceAnalysisService : IPriceAnalysisService
             _logger.LogInformation(
                 "Market data retornou apenas âncora documental para {ProductName}; benchmark externo indisponível (web scrape sem amostras).",
                 productName);
-            return null;
+            return lookup;
         }
 
-        _logger.LogInformation("Retrieved market price {Price} for {ProductName}", lookup.Price, productName);
-        return lookup.Price;
+        _logger.LogInformation(
+            "Retrieved market price {Price} for {ProductName} (source={Source})",
+            lookup.Price,
+            productName,
+            lookup.Source);
+        return lookup;
     }
 
     private static decimal ComputePriceStdDev(IReadOnlyList<decimal> prices)

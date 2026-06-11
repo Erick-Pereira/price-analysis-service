@@ -35,6 +35,61 @@ public sealed class EnrichedFinancialDataMapperTests
     }
 
     [Fact]
+    public void ToDataProcessedEvents_DividesLineTotal_WhenUnitPriceInconsistentWithQuantity()
+    {
+        var enriched = new EnrichedFinancialDataEvent
+        {
+            EventId = Guid.NewGuid(),
+            DocumentId = "doc-3",
+            EnrichedAt = DateTime.UtcNow,
+            Supplier = new SupplierInfo { NormalizedName = "Fornecedor" },
+            Items =
+            [
+                new FinancialItem
+                {
+                    Description = "Camera IP Full HD 2MP",
+                    Amount = 10680m,
+                    Quantity = 12,
+                    UnitPrice = 10680m,
+                }
+            ]
+        };
+
+        var row = EnrichedFinancialDataMapper.ToDataProcessedEvents(enriched).Single();
+
+        Assert.Equal(890m, row.Price);
+        Assert.Equal(10680m, row.LineTotal);
+        Assert.Equal(12, row.Quantity);
+    }
+
+    [Fact]
+    public void ToDataProcessedEvents_DividesLineTotal_WhenQtyOneUnitEqualsTotalButItemHasQuantity()
+    {
+        var enriched = new EnrichedFinancialDataEvent
+        {
+            EventId = Guid.NewGuid(),
+            DocumentId = "doc-4",
+            EnrichedAt = DateTime.UtcNow,
+            Supplier = new SupplierInfo { NormalizedName = "Fornecedor" },
+            Items =
+            [
+                new FinancialItem
+                {
+                    Description = "Camera IP Full HD 2MP",
+                    Amount = 10680m,
+                    Quantity = 12,
+                    UnitPrice = 10680m,
+                }
+            ]
+        };
+
+        var row = EnrichedFinancialDataMapper.ToDataProcessedEvents(enriched).Single();
+
+        Assert.Equal(890m, row.Price);
+        Assert.Equal(12, row.Quantity);
+    }
+
+    [Fact]
     public void ToDataProcessedEvents_PropagatesNotifyUserId()
     {
         var userId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

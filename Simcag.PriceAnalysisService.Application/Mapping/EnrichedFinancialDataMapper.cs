@@ -39,7 +39,9 @@ public static class EnrichedFinancialDataMapper
                 : FinancialLineItemSemanticNormalizer.ToSearchQueryLabel(semantics.CleanDescription);
 
             var lineCategory = DeriveLineCategory(productName, documentLevelCategory);
-            var comparableUnitPrice = ResolveComparableUnitPrice(item.Amount, semantics.Quantity, semantics.UnitPrice);
+            var effectiveQty = ResolveEffectiveQuantity(item, semantics);
+            var effectiveUnit = ResolveEffectiveUnitPrice(item, semantics, effectiveQty);
+            var comparableUnitPrice = ResolveComparableUnitPrice(item.Amount, effectiveQty, effectiveUnit);
 
             yield return new DataProcessedEvent(Guid.NewGuid(), productId, comparableUnitPrice, enriched.EnrichedAt, "ai-enrichment", lineCategory)
             {
@@ -51,7 +53,7 @@ public static class EnrichedFinancialDataMapper
                 Region = string.Empty,
                 SupplierId = supplierKey,
                 RawDocumentId = enriched.DocumentId,
-                Quantity = semantics.Quantity ?? item.Quantity,
+                Quantity = effectiveQty ?? semantics.Quantity ?? item.Quantity,
                 LineTotal = item.Amount
             };
         }
@@ -73,13 +75,49 @@ public static class EnrichedFinancialDataMapper
         return string.IsNullOrWhiteSpace(documentFallback) ? "Outros" : documentFallback.Trim();
     }
 
+    private static int? ResolveEffectiveQuantity(FinancialItem item, FinancialLineItemSemanticNormalizer.RepairResult semantics)
+    {
+        if (semantics.Quantity is > 1)
+            return semantics.Quantity;
+
+        if (item.Quantity is > 1)
+            return item.Quantity;
+
+        return semantics.Quantity ?? (item.Quantity is > 0 ? item.Quantity : null);
+    }
+
+    private static decimal? ResolveEffectiveUnitPrice(
+        FinancialItem item,
+        FinancialLineItemSemanticNormalizer.RepairResult semantics,
+        int? effectiveQty)
+    {
+        var unit = semantics.UnitPrice ?? item.UnitPrice;
+        if (unit is not > 0 || item.Amount <= 0)
+            return unit;
+
+        var unitNearLineTotal = Math.Abs(unit.Value - item.Amount) <= item.Amount * 0.02m;
+        if (!unitNearLineTotal)
+            return unit;
+
+        var qty = effectiveQty ?? semantics.Quantity ?? item.Quantity;
+        if (qty is > 1 || item.Quantity is > 1)
+            return null;
+
+        return null;
+    }
+
     private static decimal ResolveComparableUnitPrice(decimal lineTotal, int? quantity, decimal? unitPrice)
     {
+        if (quantity is > 1 && lineTotal > 0m)
+        {
+            if (unitPrice is > 0m && Math.Abs(unitPrice.Value * quantity.Value - lineTotal) <= 0.05m)
+                return Math.Round(unitPrice.Value, 4, MidpointRounding.AwayFromZero);
+
+            return Math.Round(lineTotal / quantity.Value, 4, MidpointRounding.AwayFromZero);
+        }
+
         if (unitPrice is > 0m)
             return Math.Round(unitPrice.Value, 4, MidpointRounding.AwayFromZero);
-
-        if (quantity is > 1 && lineTotal > 0m)
-            return Math.Round(lineTotal / quantity.Value, 4, MidpointRounding.AwayFromZero);
 
         return lineTotal;
     }

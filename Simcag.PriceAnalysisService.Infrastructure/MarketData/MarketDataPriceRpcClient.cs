@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.Logging;
 using Simcag.PriceAnalysisService.Application.Interfaces;
 using Simcag.Shared.Messaging.Rpc;
@@ -47,6 +48,33 @@ public sealed class MarketDataPriceRpcClient : IMarketDataPriceClient
                 Source = response.Source,
                 BenchmarkKind = response.BenchmarkKind,
                 BenchmarkStatus = response.BenchmarkStatus,
+                Confidence = response.Confidence,
+                SampleCount = response.SampleCount,
+                RelativeSpread = response.RelativeSpread,
+                SearchQueryUsed = response.SearchQueryUsed,
+                CollectedDate = response.CollectedDate,
+                BenchmarkRejectionTrail = response.BenchmarkRejectionTrail,
+                Evidence = response.BenchmarkDiagnostics?
+                    .Select(d => new MarketPriceEvidenceItem
+                    {
+                        Scope = d.Scope,
+                        Phase = d.Phase,
+                        Message = d.Message,
+                        Detail = d.Detail,
+                    })
+                    .ToList(),
+                ReferenceLinks = response.ReferenceLinks?
+                    .Select(l => new MarketPriceReferenceLinkItem { Label = l.Label, Url = l.Url })
+                    .ToList(),
+                MarketSamples = response.MarketSamples?
+                    .Select(s => new MarketPriceSampleItem
+                    {
+                        Label = s.Label,
+                        Url = s.Url,
+                        PriceBrl = s.PriceBrl,
+                        Provider = s.Provider,
+                    })
+                    .ToList(),
             };
         }
         catch (Exception ex)
